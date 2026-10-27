@@ -4,7 +4,7 @@ import { CameraSource, DemoSource, FileSource } from '../capture/sources';
 import { copyPreset, loadSavedPreset, parsePalette, parsePreset, PRESETS, type Preset, type Region } from '../core/presets';
 import { CanvasRecorder, downloadBlob, exportJson, timestampName } from '../core/recording';
 import { Studio } from '../core/studio';
-import type { FrameSource, StudioStats } from '../core/types';
+import type { DepthStatus, FrameSource, StudioStats } from '../core/types';
 import { Controls, Toggle } from './Controls';
 
 const emptyStats: StudioStats = { fps: 0, renderMs: 0, inferenceMs: 0, dropped: 0, logicalWidth: 320, logicalHeight: 180 };
@@ -16,6 +16,8 @@ export function App() {
   const [sourceKind, setSourceKind] = useState<FrameSource['kind']>('demo');
   const [sourceLabel, setSourceLabel] = useState('Studio scene');
   const [vision, setVision] = useState<'off' | 'loading' | 'ready' | 'demo' | 'error'>('off');
+  const [depthStatus, setDepthStatus] = useState<DepthStatus>('off');
+  const [depthMessage, setDepthMessage] = useState('');
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState('');
   const [paused, setPaused] = useState(false);
@@ -61,6 +63,7 @@ export function App() {
         },
         onSource: source => { if (active) { setSourceKind(source.kind); setSourceLabel(source.label); setPaused(false); void refreshDevices(); } },
         onEnded: () => { if (active) setPaused(true); },
+        onDepth: (status, message) => { if (active) { setDepthStatus(status); setDepthMessage(message ?? ''); } },
       });
       studio.current = engine;
       void engine.setSource(new DemoSource()).catch(() => {});
@@ -191,7 +194,7 @@ export function App() {
         </div>
         <div className="viewer-bottom"><span><LockKeyhole size={12} /> Your frames stay here. Always.</span><span><kbd>SPACE</kbd> pause <kbd>S</kbd> snapshot <kbd>R</kbd> record</span></div>
       </section>
-      <Controls preset={preset} region={region} onRegion={setRegion} onChange={setPreset} onReset={() => choosePreset(PRESETS.find(p => p.name === preset.name) ?? PRESETS[0])} onPaletteImport={() => paletteInput.current?.click()} onPaletteExport={() => exportJson(preset[region].palette, 'vxl-palette.json')} />
+      <Controls preset={preset} region={region} onRegion={setRegion} onChange={setPreset} depthStatus={depthStatus} depthMessage={depthMessage} onDepthRetry={() => studio.current?.retryDepth()} onReset={() => choosePreset(PRESETS.find(p => p.name === preset.name) ?? PRESETS[0])} onPaletteImport={() => paletteInput.current?.click()} onPaletteExport={() => exportJson(preset[region].palette, 'vxl-palette.json')} />
     </main>
     <footer className="app-footer"><span><span className="footer-mark">▦</span> MADE OF LITTLE THINGS</span><span>{preset.name} <i>/</i> {preset[region].palette.length} colors <i>/</i> {effects} effects</span><span>v0.1.0 <span className="footer-dot" /> LOCAL PROCESSING</span></footer>
     {notice && <div className="toast" role="status"><Check size={16} />{notice}</div>}

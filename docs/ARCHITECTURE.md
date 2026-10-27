@@ -1,12 +1,14 @@
 # Architecture and delivery stages
 
+Experimental scene depth is independent of person masks: `SceneDepthEstimator` owns an optional, lazily created Depth Anything worker; `FramePacket.depth` carries normalized relative distance with generation/time metadata. `DepthHistory` retains asynchronous estimates with a bounded latency-aware reuse budget, blends updates over 300 ms, and fades genuinely stale/failed estimates over one second. The studio renders continuously, preserves renderer history on normal depth updates, and animates matching paused frames until transitions finish. Clear cuts, seeks, and source changes discard mismatched fields. The renderer checks the reuse budget and uses a separate depth texture and strength for palette-constrained atmospheric effects and distant detail reduction. Preset defaults keep this path disabled. See [DEPTH.md](DEPTH.md) for research, data conventions, lifecycle guards, and limitations.
+
 ## Current prototype
 
 The browser is the initial experimental host, not a permanent product constraint. `FrameSource`, `Segmenter`, and `FramePacket` keep input, recognition, rendering, and UI separate. `Preset` is validated version 1 JSON; browser storage is only a convenience layer.
 
 Every frame has a monotonic timestamp and source generation. Transferred bitmaps are returned by the worker alongside masks. Stale generations are discarded and their bitmaps closed. Source changes stop old tracks, dispose old frames, and reset history. A busy pipeline drops capture opportunities instead of maintaining an input queue. The CPU worker is the initial portable inference backend; the renderer uses WebGL2.
 
-The rendering pipeline intentionally avoids generative frame synthesis. Regions influence sampling, palette choice, and treatment. Small-scale shape and palette decisions remain deterministic. Motion-aware temporal blending weakens when local RGB changes; palette hysteresis reduces color oscillation. These are heuristics and need real-video evaluation, particularly around low-contrast fast movement.
+The rendering pipeline intentionally avoids generative frame synthesis. Regions influence sampling, palette choice, and treatment. Small-scale shape and palette decisions remain deterministic. A quarter-resolution backward-motion pass aligns temporal evidence; match confidence and current mask certainty gate reuse. Silhouettes use a single owned distance band, while interior edges use directional thinning and hysteresis. Palette hysteresis reduces color oscillation. See [stable pixel contours](OUTLINES.md) for controls, research, and renderer-only evidence. These heuristics still need real-video evaluation, particularly around low-contrast fast movement and occlusion.
 
 ## Desktop application — next stage
 

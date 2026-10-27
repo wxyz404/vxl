@@ -4,6 +4,8 @@ import { PersonSegmenter } from '../vision/segmenter';
 import type { Preset } from './presets';
 import type { FramePacket, FrameSource, StudioStats } from './types';
 import { sceneDifference } from './scene';
+import { SceneDepthEstimator } from '../vision/depth';
+import type { DepthStatus } from './types';
 
 export interface StudioCallbacks {
   onStats(stats: StudioStats): void;
@@ -11,6 +13,7 @@ export interface StudioCallbacks {
   onVision(status: 'off' | 'loading' | 'ready' | 'demo' | 'error'): void;
   onSource(source: FrameSource): void;
   onEnded(): void;
+  onDepth?(status: DepthStatus, message?: string): void;
 }
 
 export class Studio {
@@ -37,11 +40,13 @@ export class Studio {
   private sceneContext: CanvasRenderingContext2D;
   private previousScene?: Uint8ClampedArray;
   private sourceEnded = false;
+  private depth: SceneDepthEstimator;
   paused = false;
   fpsLimit = 30;
 
   constructor(private canvas: HTMLCanvasElement, private original: HTMLCanvasElement, preset: Preset, private callbacks: StudioCallbacks) {
     this.preset = preset;
+    this.depth = new SceneDepthEstimator((status, message) => this.callbacks.onDepth?.(status, message), () => { this.dirty = true; });
     this.sceneCanvas.width = 16; this.sceneCanvas.height = 9;
     this.sceneContext = this.sceneCanvas.getContext('2d', { willReadFrequently: true })!;
     this.renderer = new PixelRenderer(canvas);
@@ -60,6 +65,7 @@ export class Studio {
 
   async setSource(source: FrameSource) {
     const generation = ++this.generation;
+    this.depth.dispose();
     this.source?.stop(); this.source = undefined;
     this.frame?.image.close(); this.frame = undefined;
     this.renderer.resetHistory(); this.splitLastFrame = false; this.lastSourceTime = 0; this.previousScene = undefined; this.sourceEnded = false;
@@ -75,7 +81,7 @@ export class Studio {
         }, { once: true });
       }
       if (source instanceof FileSource) {
-        source.video.addEventListener('seeking', () => { ++this.generation; this.renderer.resetHistory(); });
+        source.video.addEventListener('seeking', () => { ++this.generation; this.renderer.resetHistory(); this.depth.reset(); });
         source.video.addEventListener('ended', () => {
           if (this.source !== source || this.disposed) return;
           this.sourceEnded = true;
@@ -92,6 +98,7 @@ export class Studio {
     if (this.disposed) return;
     if (this.preset.segmentation !== preset.segmentation) { ++this.generation; this.visionFailed = false; }
     this.preset = preset; this.renderer.resetHistory(); this.dirty = true; this.updateVisionStatus();
+    if (!preset.depth.enabled) this.depth.dispose();
   }
   private updateVisionStatus() {
     if (!this.preset.segmentation) this.callbacks.onVision('off');
@@ -100,6 +107,7 @@ export class Studio {
     else this.callbacks.onVision('loading');
   }
   retryVision() { this.segmenter.dispose(); this.segmenter = new PersonSegmenter(); this.visionFailed = false; this.dirty = true; this.updateVisionStatus(); }
+  retryDepth() { this.depth.dispose(); this.dirty = true; }
   setPaused(paused: boolean) {
     this.paused = paused;
     if (this.source instanceof FileSource) {
@@ -121,7 +129,7 @@ export class Studio {
     }
     if (this.contextLost) return;
     if (this.paused) {
-      if (this.dirty && this.frame && !this.busy) {
+      if ((this.dirty || (this.preset.depth.enabled && this.depth.needsRepaint)) && this.frame && !this.busy) {
         if (this.preset.segmentation && !this.frame.mask && this.source?.kind !== 'demo' && !this.visionFailed) {
           this.busy = true; void this.segmentFrozenFrame().finally(() => { this.busy = false; });
         } else this.paint(this.frame);
@@ -156,12 +164,12 @@ export class Studio {
     let packet: FramePacket | null = null;
     try {
       packet = await source.capture(now, generation);
-      if (!packet) { if (this.dirty && this.frame) this.paint(this.frame); return; }
+      if (!packet) { if ((this.dirty || (this.preset.depth.enabled && this.depth.needsRepaint)) && this.frame) this.paint(this.frame); return; }
       if (this.disposed || generation !== this.generation) { packet.image.close(); return; }
       // Drop a queued frame when paused during capture; preserve the frozen frame.
       if (this.paused) { packet.image.close(); return; }
       if (source instanceof FileSource) {
-        if (source.video.currentTime < this.lastSourceTime || source.video.currentTime - this.lastSourceTime > 0.75) this.renderer.resetHistory();
+        if (source.video.currentTime < this.lastSourceTime || source.video.currentTime - this.lastSourceTime > 0.75) { this.renderer.resetHistory(); this.depth.reset(); }
         this.lastSourceTime = source.video.currentTime;
       }
       if (this.preset.segmentation && source.kind !== 'demo' && !this.visionFailed) {
@@ -190,12 +198,17 @@ export class Studio {
     const start = performance.now();
     this.sceneContext.drawImage(frame.image, 0, 0, 16, 9);
     const thumbnail = this.sceneContext.getImageData(0, 0, 16, 9).data;
-    if (this.previousScene && sceneDifference(this.previousScene, thumbnail) > 0.22) this.renderer.resetHistory();
+    if (this.previousScene && sceneDifference(this.previousScene, thumbnail) > 0.22) { this.renderer.resetHistory(); this.depth.reset(); }
     this.previousScene = thumbnail;
+    let renderFrame = frame;
+    if (this.preset.depth.enabled) {
+      if (this.source?.kind === 'demo') this.callbacks.onDepth?.('demo');
+      else renderFrame = { ...frame, depth: this.depth.update(frame, thumbnail) };
+    }
     const split = Boolean(this.preset.segmentation && frame.mask);
     if (split !== this.splitLastFrame) this.renderer.resetHistory();
     this.splitLastFrame = split;
-    const size = this.renderer.render(frame, this.preset);
+    const size = this.renderer.render(renderFrame, this.preset);
     this.stats.renderMs = performance.now() - start; this.stats.inferenceMs = frame.inferenceMs ?? 0;
     this.stats.logicalWidth = size.width; this.stats.logicalHeight = size.height;
     if (this.original.width !== this.canvas.width || this.original.height !== this.canvas.height) { this.original.width = this.canvas.width; this.original.height = this.canvas.height; }
@@ -205,6 +218,7 @@ export class Studio {
   dispose() {
     this.disposed = true; ++this.generation; cancelAnimationFrame(this.raf);
     this.source?.stop(); this.segmenter.dispose(); this.frame?.image.close(); this.frame = undefined;
+    this.depth.dispose();
     this.renderer.dispose();
     this.canvas.removeEventListener('webglcontextlost', this.onContextLost);
     this.canvas.removeEventListener('webglcontextrestored', this.onContextRestored);

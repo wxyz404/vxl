@@ -1,11 +1,30 @@
 import type { FramePacket, FrameSource } from '../core/types';
 
+/** Pin a decoded frame synchronously before handing it to async image/vision work. */
+class VideoFrameCapture {
+  private canvas = new OffscreenCanvas(1,1);
+  private context = this.canvas.getContext('2d',{alpha:false})!;
+  private lastTime = -1;
+  async capture(video: HTMLVideoElement,timestamp: number,generation: number):Promise<FramePacket|null> {
+    if(video.readyState<2||!video.videoWidth||!video.videoHeight||video.currentTime===this.lastTime) return null;
+    const time=video.currentTime;
+    if(this.canvas.width!==video.videoWidth||this.canvas.height!==video.videoHeight) {
+      this.canvas.width=video.videoWidth;this.canvas.height=video.videoHeight;
+    }
+    // createImageBitmap(video) can race decoder buffer release at the end of a clip.
+    this.context.drawImage(video,0,0,this.canvas.width,this.canvas.height);
+    const image=await createImageBitmap(this.canvas);
+    this.lastTime=time;
+    return {image,timestamp,generation};
+  }
+}
+
 export class CameraSource implements FrameSource {
   readonly kind = 'camera' as const;
   readonly label: string;
   private stream?: MediaStream;
   private video = document.createElement('video');
-  private lastTime = -1;
+  private frames = new VideoFrameCapture();
   constructor(private deviceId?: string, label?: string) { this.label = label || 'Webcam'; }
   async start() {
     if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera access needs localhost or HTTPS. Open VXL on this computer using localhost.');
@@ -16,9 +35,7 @@ export class CameraSource implements FrameSource {
     await this.video.play();
   }
   async capture(timestamp: number, generation: number) {
-    if (this.video.readyState < 2 || this.video.currentTime === this.lastTime) return null;
-    this.lastTime = this.video.currentTime;
-    return { image: await createImageBitmap(this.video), timestamp, generation };
+    return this.frames.capture(this.video,timestamp,generation);
   }
   stop() { this.video.pause(); this.stream?.getTracks().forEach(track => track.stop()); this.video.srcObject = null; }
   get tracks() { return this.stream?.getVideoTracks() ?? []; }
@@ -29,7 +46,7 @@ export class FileSource implements FrameSource {
   readonly label: string;
   readonly video = document.createElement('video');
   private url: string;
-  private lastTime = -1;
+  private frames = new VideoFrameCapture();
   constructor(file: File) { this.label = file.name; this.url = URL.createObjectURL(file); }
   async start() {
     this.video.muted = true;
@@ -39,9 +56,7 @@ export class FileSource implements FrameSource {
     await this.video.play();
   }
   async capture(timestamp: number, generation: number) {
-    if (this.video.readyState < 2 || this.video.currentTime === this.lastTime) return null;
-    this.lastTime = this.video.currentTime;
-    return { image: await createImageBitmap(this.video), timestamp, generation };
+    return this.frames.capture(this.video,timestamp,generation);
   }
   stop() { this.video.pause(); this.video.removeAttribute('src'); this.video.load(); URL.revokeObjectURL(this.url); }
 }
@@ -117,7 +132,19 @@ export class DemoSource implements FrameSource {
       const torso = y > 324 && Math.abs(dx) < Math.min(85, 36 + (y - 316) * 0.85);
       mask[py * mw + px] = head || neck || torso ? 1 : 0;
     }
-    return { image: await createImageBitmap(this.canvas), timestamp, generation, mask, maskWidth: mw, maskHeight: mh };
+    // Authored demonstration depth: window vista, wall, desk/plant, then character.
+    // This is a fixture, not a claim of neural recognition or measured distance.
+    const values = new Float32Array(mw * mh);
+    for (let py = 0; py < mh; py++) for (let px = 0; px < mw; px++) {
+      const i = py * mw + px, sx = px * 4, sy = py * 4;
+      let distance = sy > 376 ? 0.65 - (sy - 376) / 164 * 0.3 : 0.78;
+      if (sx > 74 && sx < 340 && sy > 52 && sy < 314) distance = 0.96;
+      if (sy > 405 && sx > 58 && sx < 890) distance = 0.43;
+      if (sx > 730 && sx < 830 && sy > 270 && sy < 405) distance = 0.48;
+      values[i] = mask[i] ? 0.12 : distance;
+    }
+    return { image: await createImageBitmap(this.canvas), timestamp, generation, mask, maskWidth: mw, maskHeight: mh,
+      depth: { values, width: mw, height: mh, timestamp, generation } };
   }
   stop() {}
 }

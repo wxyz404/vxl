@@ -18,7 +18,7 @@ Open **http://127.0.0.1:5173**. Start with the generated studio scene, enable yo
 
 On Windows, you can also double-click **run.bat** after installing Node.js and pnpm. It prepares local assets and opens the studio. Keep its terminal open while using VXL.
 
-`models:setup` downloads Google's approximately 250 KB landscape selfie model, pins version 1 by SHA-256, and copies the MediaPipe runtime into `public/vision/`. Corrupt models are replaced on setup; use `pnpm models:setup --force` to download again. These generated assets are intentionally ignored by Git. Run setup before building on another computer. All inference and effects then run locally; there are no runtime CDN dependencies or frame uploads. This is not an installable offline PWA: keep the local server running.
+`models:setup` downloads Google's approximately 250 KB landscape selfie model, pins version 1 by SHA-256, and copies the MediaPipe runtime into `public/vision/`. Corrupt models are replaced on setup; use `pnpm models:setup --force` to download again. These generated assets are intentionally ignored by Git. Run setup before building on another computer. Inference and effects run locally without frame uploads. Standard effects and person separation need no runtime CDN; optional experimental depth downloads its model from Hugging Face on first use. This is not an installable offline PWA: keep the local server running.
 
 ## Included
 
@@ -26,7 +26,9 @@ On Windows, you can also double-click **run.bat** after installing Node.js and p
 - **Pixel Video** and **Sprite Scene** presets, with 160/240/320/480-pixel longest-edge resolutions and aspect-ratio preservation.
 - Fixed editable palettes, perceptual color mapping, mask-weighted downsampling, bilateral simplification, palette hysteresis, cluster cleanup, and palette-constrained selective antialiasing.
 - Dark, colored, or selective outlines; outline thickness; internal edges; light direction; deterministic Bayer dithering; stipple and hatch textures.
+- Motion-aligned contour history, one-sided silhouette bands, and separate contour smoothing/outline stability controls; old presets remain compatible.
 - Separate person/background treatments, using a local MediaPipe model in a worker. All people share one foreground category.
+- **Experimental Settings → Depth-aware styling** (off by default): relative scene depth guides atmospheric color, contrast, saturation, texture, clusters, and outlines. Includes depth/plane previews. Camera/video use a lazily loaded depth model; the illustration uses authored demo depth. See the [research, controls, comparison, and limitations](docs/DEPTH.md).
 - Original/filtered comparison, pause, performance details, and 15/30 FPS caps.
 - PNG snapshots, silent browser-supported video recording, JSON palettes and presets, and locally remembered settings.
 - Camera-error recovery, model-failure whole-frame fallback, source-generation guards, matching frame/mask ownership, context-loss recovery, and camera/bitmap/worker cleanup.
@@ -74,7 +76,7 @@ The browser suite exercises real WebGL shaders, exports, control state, mobile l
 | `src/render` | Independent WebGL2 multipass renderer |
 | `src/ui` | React studio and controls |
 
-The renderer works on a single aligned low-resolution grid. The pipeline is: matching RGB/mask → region-weighted downsampling and stability → Oklab palette mapping → cluster cleanup → dithering/textures → outlines/antialiasing → integer nearest-neighbor enlargement. Shape cleanup precedes patterning so it does not erase intentional dithering.
+The renderer works on a single aligned low-resolution grid. The pipeline is: matching RGB/mask → spatial preparation and backward motion → region-weighted downsampling and stability → Oklab palette mapping → cluster cleanup → dithering/textures → independently stabilized contour composition → integer nearest-neighbor enlargement. Shape cleanup precedes patterning so it does not erase intentional dithering. See [outline behavior, comparisons, and research references](docs/OUTLINES.md).
 
 Only one capture/inference job runs at a time. Incoming opportunities are skipped rather than queued, so slow inference does not create an ever-growing delay. The output keeps each mask paired with the actual image used to compute it. Pattern coordinates stay attached to the screen grid; motion-following textures require a later tracking implementation.
 

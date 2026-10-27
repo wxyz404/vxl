@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "packageManager": "pnpm@11.25.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
@@ -12,9 +14,12 @@
     "models:setup": "node scripts/setup-models.mjs",
     "postinstall": "node scripts/setup-models.mjs --runtime-only",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "compare:outlines": "node scripts/compare-outlines.mjs",
+    "compare:depth": "node scripts/compare-depth.mjs"
   },
   "dependencies": {
+    "@huggingface/transformers": "3.8.1",
     "@mediapipe/tasks-vision": "^0.10.22-rc.20250304",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",

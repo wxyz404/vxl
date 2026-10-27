@@ -77,7 +77,8 @@ test('records a playable silent clip and unlocks source controls after stopping'
   await page.goto('/'); await expect(page.getByRole('button', { name: 'Record clip', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Record clip', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Webcam', exact: false })).toBeDisabled();
-  await expect(page.getByRole('button', { name: /Stop 0:0[1-9]/ })).toBeVisible();
+  // Software graphics and the encoder can take a few frames to warm up together.
+  await expect(page.getByRole('button', { name: /Stop 0:0[3-9]/ })).toBeVisible();
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: /Stop 0:/ }).click();
   const file = await download; expect(file.suggestedFilename()).toMatch(/\.(webm|mp4)$/);
@@ -94,6 +95,11 @@ test('synthetic webcam runs real person segmentation and releases tracks on sour
   await context.grantPermissions(['camera']);
   await page.addInitScript(() => {
     const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    const bitmap=window.createImageBitmap.bind(window);
+    window.createImageBitmap=((...args:Parameters<typeof createImageBitmap>)=>{
+      if(args[0] instanceof HTMLVideoElement) return Promise.reject(new DOMException('Decoder released the frame','InvalidStateError'));
+      return bitmap(...args);
+    }) as typeof createImageBitmap;
     (window as unknown as { cameraTracks: MediaStreamTrack[] }).cameraTracks = [];
     navigator.mediaDevices.getUserMedia = async options => {
       const stream = await original(options);

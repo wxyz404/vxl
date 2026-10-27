@@ -23,15 +23,31 @@ export const styleSchema = z.object({
   contrast: z.number().min(0.5).max(1.8),
   saturation: z.number().min(0).max(1.5),
 });
+export const depthSchema = z.object({
+  enabled: z.boolean().default(false),
+  atmosphere: hex.default('#b9cbd5'),
+  haze: z.number().min(0).max(1).default(0.12),
+  desaturation: z.number().min(0).max(1).default(0.14),
+  contrast: z.number().min(0).max(1).default(0.10),
+  detail: z.number().min(0).max(1).default(0.45),
+  focus: z.number().min(0).max(0.8).default(0.2),
+  preview: z.enum(['art', 'depth', 'planes']).default('art'),
+});
+export const DEFAULT_DEPTH = depthSchema.parse({});
+export type DepthSettings = z.infer<typeof depthSchema>;
+
 export const presetSchema = z.object({
   version: z.literal(1),
   name: z.string().trim().min(1).max(60),
   resolution: z.union([z.literal(160), z.literal(240), z.literal(320), z.literal(480)]),
   segmentation: z.boolean(),
   stability: z.number().min(0).max(1),
+  outlineStability: z.number().min(0).max(1).default(0.65),
+  contourSmoothing: z.number().min(0).max(1).default(0.55),
   lightAngle: z.number().min(0).max(360),
   foreground: styleSchema,
   background: styleSchema,
+  depth: depthSchema.default({}),
 });
 
 export type RegionStyle = z.infer<typeof styleSchema>;
@@ -46,11 +62,11 @@ function style(colors: readonly string[], overrides: Partial<RegionStyle> = {}):
 }
 
 export const PRESETS: Preset[] = [
-  { version: 1, name: 'Pixel Video', resolution: 320, segmentation: false, stability: 0.55, lightAngle: 315,
-    foreground: style(PALETTES.studio.colors), background: style(PALETTES.studio.colors, { simplify: 0.5, clusters: 0.5, internalEdges: 0.08, dither: 0.08 }) },
-  { version: 1, name: 'Sprite Scene', resolution: 160, segmentation: false, stability: 0.65, lightAngle: 315,
+  { version: 1, name: 'Pixel Video', resolution: 320, segmentation: false, stability: 0.55, outlineStability: 0.65, contourSmoothing: 0.55, lightAngle: 315,
+    foreground: style(PALETTES.studio.colors), background: style(PALETTES.studio.colors, { simplify: 0.5, clusters: 0.5, internalEdges: 0.08, dither: 0.08 }), depth: { ...DEFAULT_DEPTH } },
+  { version: 1, name: 'Sprite Scene', resolution: 160, segmentation: false, stability: 0.65, outlineStability: 0.75, contourSmoothing: 0.65, lightAngle: 315,
     foreground: style(PALETTES.grove.colors, { simplify: 0.6, clusters: 0.65, dither: 0.22, contrast: 1.12 }),
-    background: style(PALETTES.grove.colors, { simplify: 0.75, clusters: 0.8, dither: 0.16, internalEdges: 0.04, outline: 'colored' }) },
+    background: style(PALETTES.grove.colors, { simplify: 0.75, clusters: 0.8, dither: 0.16, internalEdges: 0.04, outline: 'colored' }), depth: { ...DEFAULT_DEPTH } },
 ];
 
 export function copyPreset(preset: Preset): Preset { return structuredClone(preset); }

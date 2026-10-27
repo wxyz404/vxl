@@ -17,8 +17,16 @@ describe('portable styles', () => {
       { ...original, background: { ...original.background, outlineWidth: 50 } },
       { ...original, foreground: { ...original.foreground, palette: new Array(33).fill('#ffffff') } },
       { ...original, background: undefined },
+      { ...original, outlineStability: 1.1 }, { ...original, contourSmoothing: -0.1 },
     ];
     for (const value of invalid) expect(() => parsePreset(JSON.stringify(value))).toThrow();
+  });
+  it('loads version 1 presets from before contour controls were added', () => {
+    const { outlineStability: _stability, contourSmoothing: _smoothing, ...legacy } = PRESETS[0];
+    const loaded = parsePreset(JSON.stringify(legacy));
+    expect(loaded.outlineStability).toBe(0.65);
+    expect(loaded.contourSmoothing).toBe(0.55);
+    expect(loaded.foreground).toEqual(legacy.foreground);
   });
   it('accepts palette arrays and named palette objects, rejecting arbitrary input', () => {
     expect(parsePalette('["#112233", "#abcdef"]')).toEqual(['#112233', '#abcdef']);
