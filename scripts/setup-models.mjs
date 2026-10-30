@@ -9,6 +9,29 @@ await cp(resolve(root, 'node_modules/@mediapipe/tasks-vision/wasm'), resolve(des
 console.log('MediaPipe runtime copied into public/vision/wasm.');
 if (process.argv.includes('--runtime-only')) process.exit(0);
 
+if (process.argv.includes('--face')) {
+  const filename = 'face_landmarker.task';
+  const modelPath = resolve(destination, filename);
+  const sha256 = '64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff';
+  const url = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+  const valid = bytes => bytes.length > 1_000_000 && [0, 2].some(i => bytes.subarray(i, i + 4).equals(Buffer.from([80, 75, 3, 4]))) && createHash('sha256').update(bytes).digest('hex') === sha256;
+  let bytes;
+  try { bytes = await readFile(modelPath); } catch { /* First setup. */ }
+  if (!bytes || !valid(bytes) || process.argv.includes('--force')) {
+    console.log('Downloading the face landmark model from Google...');
+    const response = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+    if (!response.ok) throw new Error(`Face model download failed (${response.status}). Retry pnpm models:setup -- --face.`);
+    bytes = Buffer.from(await response.arrayBuffer());
+    if (!valid(bytes)) throw new Error('Face model integrity check failed. The existing model was not replaced.');
+    const temporary = `${modelPath}.download`;
+    try { await writeFile(temporary, bytes); await rename(temporary, modelPath); }
+    finally { await rm(temporary, { force: true }); }
+  }
+  await writeFile(resolve(destination, 'face-model-info.json'), JSON.stringify({ source: url, sha256, bytes: bytes.length, license: 'Apache-2.0' }, null, 2));
+  console.log(`Face model installed and SHA-256 verified (${(bytes.length / 1024 / 1024).toFixed(1)} MB). Frames stay local; inference works offline.`);
+  process.exit(0);
+}
+
 const filename = 'selfie_segmenter_landscape.tflite';
 const modelPath = resolve(destination, filename);
 const expectedSha256 = '490e9ea734313e0de10fa0cd9e3c6133e36ea4db2b7a49bde9ef019f72796b8e';

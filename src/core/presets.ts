@@ -5,12 +5,22 @@ export const PALETTES = {
   grove: { name: 'Grove 16', colors: ['#172b29','#24413a','#365d43','#598452','#88ac69','#bed18b','#e8e8ac','#f8f1d4','#d9b894','#b78873','#8b625b','#624953','#483d50','#656477','#92949b','#c4c7bd'] },
   ember: { name: 'Ember 16', colors: ['#211c2b','#392838','#573746','#7e454e','#a85d58','#d67f64','#edae82','#f8d7a3','#fff0cd','#b5c7a3','#7e9c8c','#4d787e','#365566','#2c3e55','#6b6682','#aaa0ad'] },
   mono: { name: 'Pocket 4', colors: ['#183b2b','#42744a','#8eb55c','#dce6a4'] },
+  dawnbringer: { name: 'DawnBringer 32', colors: ['#000000','#222034','#45283c','#663931','#8f563b','#df7126','#d9a066','#eec39a','#fbf236','#99e550','#6abe30','#37946e','#4b692f','#524b24','#323c39','#3f3f74','#306082','#5b6ee1','#639bff','#5fcde4','#cbdbfc','#ffffff','#9badb7','#847e87','#696a6a','#595652','#76428a','#ac3232','#d95763','#d77bba','#8f974a','#8a6f30'] },
 } as const;
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Use six-digit hex colors, such as #c1ef70.');
 export const paletteSchema = z.array(hex).min(2).max(32);
+export const colorMappingSchema = z.object({
+  mode: z.enum(['nearest', 'mood', 'correspondence', 'ramp']).default('nearest'),
+  strength: z.number().min(0).max(1).default(1),
+  // Empty means automatic. Authored stops must still belong to the active palette.
+  ramp: z.array(hex).max(5).refine(value => value.length === 0 || value.length === 5, 'Use five ramp colors.').default([]),
+});
+export const DEFAULT_COLOR_MAPPING = colorMappingSchema.parse({});
+export type ColorMappingSettings = z.infer<typeof colorMappingSchema>;
 export const styleSchema = z.object({
   palette: paletteSchema,
+  colorMapping: colorMappingSchema.default({}),
   simplify: z.number().min(0).max(1),
   clusters: z.number().min(0).max(1),
   outline: z.enum(['off', 'dark', 'colored', 'selective']),
@@ -36,6 +46,16 @@ export const depthSchema = z.object({
 export const DEFAULT_DEPTH = depthSchema.parse({});
 export type DepthSettings = z.infer<typeof depthSchema>;
 
+export const faceSchema = z.object({
+  enabled: z.boolean().default(false),
+  treatment: z.enum(['portrait', 'sprite']).default('portrait'),
+  strength: z.number().min(0).max(1).default(0.65),
+  featureEmphasis: z.number().min(0).max(1).default(0.5),
+  exaggeration: z.number().min(0).max(1).default(0),
+});
+export const DEFAULT_FACE = faceSchema.parse({});
+export type FaceSettings = z.infer<typeof faceSchema>;
+
 export const presetSchema = z.object({
   version: z.literal(1),
   name: z.string().trim().min(1).max(60),
@@ -48,6 +68,7 @@ export const presetSchema = z.object({
   foreground: styleSchema,
   background: styleSchema,
   depth: depthSchema.default({}),
+  face: faceSchema.default({}),
 });
 
 export type RegionStyle = z.infer<typeof styleSchema>;
@@ -56,17 +77,18 @@ export type Region = 'foreground' | 'background';
 export type Outline = RegionStyle['outline'];
 
 function style(colors: readonly string[], overrides: Partial<RegionStyle> = {}): RegionStyle {
-  return { palette: [...colors], simplify: 0.35, clusters: 0.35, outline: 'selective', outlineWidth: 1,
+  return { palette: [...colors], colorMapping: { ...DEFAULT_COLOR_MAPPING, ramp: [] }, simplify: 0.35, clusters: 0.35, outline: 'selective', outlineWidth: 1,
     internalEdges: 0.18, antialias: false, dither: 0.12, texture: 'off', textureStrength: 0.15,
     contrast: 1.05, saturation: 1, ...overrides };
 }
 
 export const PRESETS: Preset[] = [
-  { version: 1, name: 'Pixel Video', resolution: 320, segmentation: false, stability: 0.55, outlineStability: 0.65, contourSmoothing: 0.55, lightAngle: 315,
-    foreground: style(PALETTES.studio.colors), background: style(PALETTES.studio.colors, { simplify: 0.5, clusters: 0.5, internalEdges: 0.08, dither: 0.08 }), depth: { ...DEFAULT_DEPTH } },
+  { version: 1, name: 'Pixel Video', resolution: 320, segmentation: false, stability: 0.5, outlineStability: 0.5, contourSmoothing: 0.5, lightAngle: 315,
+    foreground: style(PALETTES.dawnbringer.colors, { simplify: 0.5, clusters: 0.2, contrast: 0.8, saturation: 1, internalEdges: 0.9, dither: 0.05, colorMapping: { ...DEFAULT_COLOR_MAPPING, mode: 'mood', ramp: [] } }),
+    background: style(PALETTES.studio.colors, { simplify: 0.5, clusters: 0.5, internalEdges: 0.08, dither: 0.08 }), depth: { ...DEFAULT_DEPTH }, face: { ...DEFAULT_FACE } },
   { version: 1, name: 'Sprite Scene', resolution: 160, segmentation: false, stability: 0.65, outlineStability: 0.75, contourSmoothing: 0.65, lightAngle: 315,
     foreground: style(PALETTES.grove.colors, { simplify: 0.6, clusters: 0.65, dither: 0.22, contrast: 1.12 }),
-    background: style(PALETTES.grove.colors, { simplify: 0.75, clusters: 0.8, dither: 0.16, internalEdges: 0.04, outline: 'colored' }), depth: { ...DEFAULT_DEPTH } },
+    background: style(PALETTES.grove.colors, { simplify: 0.75, clusters: 0.8, dither: 0.16, internalEdges: 0.04, outline: 'colored' }), depth: { ...DEFAULT_DEPTH }, face: { ...DEFAULT_FACE } },
 ];
 
 export function copyPreset(preset: Preset): Preset { return structuredClone(preset); }

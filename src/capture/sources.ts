@@ -1,4 +1,5 @@
 import type { FramePacket, FrameSource } from '../core/types';
+import { authoredFace } from '../vision/face-geometry';
 
 /** Pin a decoded frame synchronously before handing it to async image/vision work. */
 class VideoFrameCapture {
@@ -144,7 +145,8 @@ export class DemoSource implements FrameSource {
       values[i] = mask[i] ? 0.12 : distance;
     }
     return { image: await createImageBitmap(this.canvas), timestamp, generation, mask, maskWidth: mw, maskHeight: mh,
-      depth: { values, width: mw, height: mh, timestamp, generation } };
+      depth: { values, width: mw, height: mh, timestamp, generation },
+      face: { observation: authoredFace(x/960,250/540,102/960,130/540,timestamp,generation), strength:1, allowWarp:true } };
   }
   stop() {}
 }

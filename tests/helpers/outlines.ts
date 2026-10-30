@@ -30,6 +30,8 @@ export async function outlineSequence(options: OutlineOptions) {
     palette:['#000000','#ffffff'],simplify:0,clusters:0,outline:options.mode??'dark',
     outlineWidth:options.width??1,internalEdges:options.kind==='interior'?0.5:0,
     antialias:false,dither:0,texture:'off',contrast:1,saturation:1,
+    // Measure contour geometry independently of the selected artistic preset.
+    colorMapping:{mode:'nearest',strength:1,ramp:[]},
   });
   if(options.backgroundOnly) preset.foreground.outline='off';
   let Renderer=PixelRenderer;

@@ -12,6 +12,22 @@ export interface DepthField {
 }
 export type DepthStatus = 'off' | 'loading' | 'estimating' | 'ready' | 'holding' | 'demo' | 'stale' | 'error';
 
+/** Source-normalized, top-left coordinates. Geometry, never an identity descriptor. */
+export interface FaceObservation {
+  landmarks: Float32Array;
+  timestamp: number;
+  generation: number;
+  inferenceMs: number;
+  /** Changes when spatial continuity is lost; unrelated to personal identity. */
+  continuity?: number;
+}
+export interface FaceField {
+  observation: FaceObservation;
+  strength: number;
+  allowWarp: boolean;
+}
+export type FaceStatus = 'off' | 'loading' | 'estimating' | 'tracking' | 'no-face' | 'small' | 'stale' | 'demo' | 'error';
+
 export interface FramePacket {
   image: ImageBitmap;
   timestamp: number;
@@ -21,6 +37,7 @@ export interface FramePacket {
   maskHeight?: number;
   inferenceMs?: number;
   depth?: DepthField;
+  face?: FaceField;
 }
 
 export interface FrameSource {
@@ -40,6 +57,7 @@ export interface Segmenter {
 export interface StudioStats {
   fps: number;
   inferenceMs: number;
+  faceInferenceMs?: number;
   renderMs: number;
   dropped: number;
   logicalWidth: number;

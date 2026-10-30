@@ -1,21 +1,21 @@
 import { ChevronDown, Download, Upload, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
 import { PALETTES, type Preset, type Region, type RegionStyle, type DepthSettings } from '../core/presets';
-import type { DepthStatus } from '../core/types';
-
-export function Toggle({ checked, onChange, label, disabled = false }: { checked: boolean; onChange: (value: boolean) => void; label: string; disabled?: boolean }) {
-  return <button type="button" role="switch" aria-label={label} aria-checked={checked} disabled={disabled} className={`toggle ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)}><span /></button>;
-}
-export function Slider({ label, value, onChange, min = 0, max = 1, step = 0.01, display }: { label: string; value: number; onChange: (value: number) => void; min?: number; max?: number; step?: number; display?: string }) {
-  return <label className="slider"><span className="control-label">{label}<output>{display ?? `${Math.round(value * 100)}%`}</output></span><input aria-label={label} type="range" min={min} max={max} step={step} value={value} onChange={event => onChange(Number(event.target.value))} style={{ '--fill': `${(value - min) / (max - min) * 100}%` } as React.CSSProperties} /></label>;
-}
+import type { DepthStatus, FaceStatus } from '../core/types';
+import { FaceControls } from './FaceControls';
+import { PaletteMappingControls } from './PaletteMappingControls';
+import { Slider, Toggle } from './ControlInputs';
+export { Slider, Toggle } from './ControlInputs';
 
 interface Props {
   preset: Preset; region: Region; onRegion(region: Region): void; onChange(preset: Preset): void;
   onPaletteImport(): void; onPaletteExport(): void; onReset(): void;
   depthStatus?: DepthStatus; depthMessage?: string; onDepthRetry?(): void;
+  onColorReference(): void;
+  faceStatus?:FaceStatus; faceMessage?:string; onFaceRetry():void;
+  showFaceRegion:boolean; onShowFaceRegion(value:boolean):void;
 }
-export function Controls({ preset, region, onRegion, onChange, onPaletteImport, onPaletteExport, onReset, depthStatus = 'off', depthMessage, onDepthRetry }: Props) {
+export function Controls({ preset, region, onRegion, onChange, onPaletteImport, onPaletteExport, onReset, depthStatus = 'off', depthMessage, onDepthRetry, onColorReference, faceStatus='off',faceMessage,onFaceRetry,showFaceRegion,onShowFaceRegion }: Props) {
   const [tab, setTab] = useState('art');
   const style = preset[region];
   function update<K extends keyof RegionStyle>(key: K, value: RegionStyle[K]) { onChange({ ...preset, [region]: { ...style, [key]: value } }); }
@@ -29,7 +29,14 @@ export function Controls({ preset, region, onRegion, onChange, onPaletteImport, 
     }}>
       {(['art', 'experimental'] as const).map(value => <button key={value} id={`settings-tab-${value}`} role="tab" aria-selected={tab === value} aria-controls={`settings-panel-${value}`} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)}>{value === 'art' ? 'Art Settings' : 'Experimental Settings'}</button>)}
     </div>
+    <div className="region-tabs" role="tablist" aria-label="Region to edit">
+      <button role="tab" aria-selected={region === 'foreground'} className={region === 'foreground' ? 'selected' : ''} onClick={() => onRegion('foreground')}>{preset.segmentation ? 'Person' : 'Whole frame'}</button>
+      <button role="tab" aria-selected={region === 'background'} className={region === 'background' ? 'selected' : ''} onClick={() => onRegion('background')}>Background</button>
+    </div>
+    {region === 'background' && !preset.segmentation && <p className="field-note">Enable person separation to apply these background settings.</p>}
     <div id="settings-panel-experimental" role="tabpanel" aria-labelledby="settings-tab-experimental" className="settings-panel" hidden={tab !== 'experimental'}>
+      <FaceControls value={preset.face} onChange={face=>onChange({...preset,face})} status={faceStatus} message={faceMessage} onRetry={onFaceRetry} showRegion={showFaceRegion} onShowRegion={onShowFaceRegion}/>
+      <PaletteMappingControls style={style} onChange={value => update('colorMapping', value)} onRefresh={onColorReference} />
       <section className="control-section depth-controls">
         <div className="section-heading"><h3>Depth-aware art</h3><span>EXPERIMENT</span></div>
         <div className="inline-control"><span>Enable depth styling</span><Toggle label="Depth-aware styling" checked={preset.depth.enabled} onChange={enabled => onChange({ ...preset, depth: { ...preset.depth, enabled } })} /></div>
@@ -51,11 +58,6 @@ export function Controls({ preset, region, onRegion, onChange, onPaletteImport, 
       </section>
     </div>
     <div id="settings-panel-art" role="tabpanel" aria-labelledby="settings-tab-art" className="settings-panel" hidden={tab !== 'art'}>
-    <div className="region-tabs" role="tablist" aria-label="Region to edit">
-      <button role="tab" aria-selected={region === 'foreground'} className={region === 'foreground' ? 'selected' : ''} onClick={() => onRegion('foreground')}>{preset.segmentation ? 'Person' : 'Whole frame'}</button>
-      <button role="tab" aria-selected={region === 'background'} className={region === 'background' ? 'selected' : ''} onClick={() => onRegion('background')}>Background</button>
-    </div>
-    {region === 'background' && !preset.segmentation && <p className="field-note">Enable person separation to apply these background settings.</p>}
     <section className="control-section">
       <div className="section-heading"><h3>Palette</h3><span>{style.palette.length} colors</span></div>
       <div className="select-wrap"><select aria-label="Color palette" value={knownPalette} onChange={e => { const palette = PALETTES[e.target.value as keyof typeof PALETTES]; if (palette) update('palette', [...palette.colors]); }}>
@@ -63,6 +65,7 @@ export function Controls({ preset, region, onRegion, onChange, onPaletteImport, 
       </select><ChevronDown size={14} /></div>
       <div className="swatches">{style.palette.map((color, i) => <label key={i} className="swatch" style={{ background: color }} title={`Color ${i + 1}: ${color}`}><input type="color" aria-label={`Palette color ${i + 1}`} value={color} onChange={e => update('palette', style.palette.map((c, j) => j === i ? e.target.value : c))} /></label>)}</div>
       <div className="palette-actions"><button onClick={onPaletteImport}><Upload size={12} /> Import palette</button><button aria-label="Export palette" title="Export palette" onClick={onPaletteExport}><Download size={13} /></button></div>
+      <p className="field-note">Import a PNG swatch strip or grid, or a JSON palette (2–32 colors).</p>
     </section>
     <section className="control-section"><h3>Shape & detail</h3>
       <Slider label="Simplification" value={style.simplify} onChange={v => update('simplify', v)} />

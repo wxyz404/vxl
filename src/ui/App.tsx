@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Aperture, Camera, Check, ChevronDown, CircleHelp, Columns2, Download, FileVideo, FolderOpen, Gauge, Image as ImageIcon, Layers2, LockKeyhole, Pause, Play, Plus, ScanLine, SlidersHorizontal, Square, Upload, WandSparkles, X } from 'lucide-react';
 import { CameraSource, DemoSource, FileSource } from '../capture/sources';
-import { copyPreset, loadSavedPreset, parsePalette, parsePreset, PRESETS, type Preset, type Region } from '../core/presets';
+import { copyPreset, loadSavedPreset, parsePreset, PRESETS, type Preset, type Region } from '../core/presets';
+import { importPaletteFile } from '../core/palette-import';
 import { CanvasRecorder, downloadBlob, exportJson, timestampName } from '../core/recording';
 import { Studio } from '../core/studio';
-import type { DepthStatus, FrameSource, StudioStats } from '../core/types';
+import type { DepthStatus, FaceStatus, FrameSource, StudioStats } from '../core/types';
 import { Controls, Toggle } from './Controls';
 
 const emptyStats: StudioStats = { fps: 0, renderMs: 0, inferenceMs: 0, dropped: 0, logicalWidth: 320, logicalHeight: 180 };
@@ -18,6 +19,10 @@ export function App() {
   const [vision, setVision] = useState<'off' | 'loading' | 'ready' | 'demo' | 'error'>('off');
   const [depthStatus, setDepthStatus] = useState<DepthStatus>('off');
   const [depthMessage, setDepthMessage] = useState('');
+  const [faceStatus,setFaceStatus]=useState<FaceStatus>('off');
+  const [faceMessage,setFaceMessage]=useState('');
+  const [showFaceRegion,setShowFaceRegion]=useState(false);
+  const faceOverlay=useRef<HTMLCanvasElement>(null);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState('');
   const [paused, setPaused] = useState(false);
@@ -64,6 +69,7 @@ export function App() {
         onSource: source => { if (active) { setSourceKind(source.kind); setSourceLabel(source.label); setPaused(false); void refreshDevices(); } },
         onEnded: () => { if (active) setPaused(true); },
         onDepth: (status, message) => { if (active) { setDepthStatus(status); setDepthMessage(message ?? ''); } },
+        onFace:(status,message)=>{if(active){setFaceStatus(status);setFaceMessage(message??'');}},
       });
       studio.current = engine;
       void engine.setSource(new DemoSource()).catch(() => {});
@@ -80,6 +86,7 @@ export function App() {
     try { localStorage.setItem('vxl.preset.v1', JSON.stringify(preset)); } catch { /* Storage can be disabled; JSON export is still available. */ }
   }, [preset]);
   useEffect(() => { if (studio.current) studio.current.fpsLimit = limit; }, [limit, boot]);
+  useEffect(()=>{studio.current?.setFaceOverlay(showFaceRegion&&preset.face.enabled?faceOverlay.current??undefined:undefined);},[showFaceRegion,preset.face.enabled,boot]);
   useEffect(() => { if (!notice) return; const id = setTimeout(() => setNotice(''), 4500); return () => clearTimeout(id); }, [notice]);
   useEffect(() => {
     if (!recording) return;
@@ -132,14 +139,17 @@ export function App() {
     if (recording && value.resolution !== preset.resolution) { setError('Stop recording before changing the pixel resolution.'); return; }
     setPreset({ ...copyPreset(value), segmentation: preset.segmentation });
   }
-  async function importJson(file: File | undefined, kind: 'palette' | 'preset') {
+  async function importFile(file: File | undefined, kind: 'palette' | 'preset') {
     if (!file) return;
-    if (file.size > 64 * 1024) { setError('Choose a JSON file smaller than 64 KB.'); return; }
+    setError(''); setNotice('');
     try {
-      const text = await file.text();
-      if (kind === 'palette') setPreset(p => ({ ...p, [region]: { ...p[region], palette: parsePalette(text) } }));
+      if (kind === 'palette') {
+        const palette = await importPaletteFile(file);
+        setPreset(p => ({ ...p, [region]: { ...p[region], palette } }));
+      }
       else {
-        const imported = parsePreset(text);
+        if (file.size > 64 * 1024) throw new Error('Choose a JSON file smaller than 64 KB.');
+        const imported = parsePreset(await file.text());
         if (recording && imported.resolution !== preset.resolution) throw new Error('Stop recording before importing a different resolution.');
         setPreset(imported);
       }
@@ -181,27 +191,27 @@ export function App() {
         <div className={`stage ${compare ? 'comparing' : ''}`}>
           <div className="canvas-pair">
             <div className="canvas-pane original-pane" hidden={!compare}><span className="canvas-label">ORIGINAL</span><canvas ref={original} aria-label="Original video preview" /></div>
-            <div className="canvas-pane"><span className="canvas-label">{compare ? 'VXL' : paused ? 'PAUSED' : 'FILTERED OUTPUT'}</span><canvas ref={output} data-testid="output-canvas" aria-label="Pixel art video preview" /><div className="canvas-corner tl" /><div className="canvas-corner br" /></div>
+            <div className="canvas-pane"><span className="canvas-label">{compare ? 'VXL' : paused ? 'PAUSED' : 'FILTERED OUTPUT'}</span><div className="face-output"><canvas ref={output} data-testid="output-canvas" aria-label="Pixel art video preview" /><canvas ref={faceOverlay} className="face-overlay" data-testid="face-overlay" aria-hidden="true" hidden={!showFaceRegion || !preset.face.enabled} /></div><div className="canvas-corner tl" /><div className="canvas-corner br" /></div>
           </div>
           {!ready && <div className="stage-loading"><ScanLine size={24} /><span>{opening ? 'Opening your source…' : error ? 'Preview unavailable' : 'Preparing the canvas…'}</span>{error && <button onClick={() => { setError(''); setBoot(v => v + 1); }}>Reload renderer</button>}</div>}
           <div className="stage-info"><span>{stats.logicalWidth} × {stats.logicalHeight}<i>LOGICAL PIXELS</i></span><span><span className="mini-dot" /> {paused ? 'PAUSED' : ready ? `${Math.round(stats.fps)} FPS` : 'STARTING'}</span></div>
         </div>
         <div className="transport"><div className="transport-left"><button className="play-button" onClick={togglePaused} disabled={!ready} aria-label={paused ? 'Play preview' : 'Pause preview'}>{paused ? <Play size={16} fill="currentColor" /> : <Pause size={16} fill="currentColor" />}</button><span className="transport-status">{paused ? 'Paused' : 'Preview running'}<small>{sourceKind === 'demo' ? 'Generated illustration · no camera access' : 'Video only · audio is not captured'}</small></span></div><div className="export-actions"><button className="secondary-button" onClick={snapshot} disabled={!ready}><ImageIcon size={15} /> Snapshot</button><button className={`record-button ${recording ? 'is-recording' : ''}`} onClick={toggleRecording} disabled={!ready && !recording}>{recording ? <Square size={11} fill="currentColor" /> : <span className="record-dot" />}{recording ? `Stop ${Math.floor(recordSeconds / 60)}:${String(recordSeconds % 60).padStart(2, '0')}` : 'Record clip'}</button></div></div>
-        {diagnostics && <div className="diagnostics"><div><span>Inference</span><strong>{stats.inferenceMs.toFixed(1)} ms</strong></div><div><span>Render submission</span><strong>{stats.renderMs.toFixed(1)} ms</strong></div><div><span>Skipped slots</span><strong>{stats.dropped}</strong></div><div><span>Frame cap</span><select aria-label="Frame rate limit" value={limit} onChange={e => setLimit(Number(e.target.value))}><option value={30}>30 FPS</option><option value={15}>15 FPS</option></select></div><p>FPS counts newly styled frames. Render timing measures CPU submission, not GPU execution. {recording && `Recording ${recordCanvasSize.current}.`}</p></div>}
+        {diagnostics && <div className="diagnostics"><div><span>Inference</span><strong>{stats.inferenceMs.toFixed(1)} ms</strong></div><div><span>Face inference</span><strong>{(stats.faceInferenceMs ?? 0).toFixed(1)} ms</strong></div><div><span>Render submission</span><strong>{stats.renderMs.toFixed(1)} ms</strong></div><div><span>Skipped slots</span><strong>{stats.dropped}</strong></div><div><span>Frame cap</span><select aria-label="Frame rate limit" value={limit} onChange={e => setLimit(Number(e.target.value))}><option value={30}>30 FPS</option><option value={15}>15 FPS</option></select></div><p>FPS counts newly styled frames. Render timing measures CPU submission, not GPU execution. {recording && `Recording ${recordCanvasSize.current}.`}</p></div>}
         <div className="canvas-settings"><div className="settings-title"><SlidersHorizontal size={15} /><h2>Canvas settings</h2></div><div className="canvas-setting-row"><div><strong>Pixel resolution</strong><p>A shared grid keeps every region in sync.</p></div><div className="segmented resolution-select" role="group" aria-label="Pixel resolution">{[160, 240, 320, 480].map(n => <button key={n} aria-pressed={preset.resolution === n} className={preset.resolution === n ? 'selected' : ''} disabled={recording} onClick={() => setPreset({ ...preset, resolution: n as Preset['resolution'] })}>{n}<small>px</small></button>)}</div></div>
           <div className="canvas-setting-row"><div><strong><Layers2 size={14} /> Person separation</strong><p>{vision === 'off' ? 'Give people and background their own look.' : visionLabel}</p></div><div className="vision-controls">{vision === 'error' && <button className="text-button" onClick={() => studio.current?.retryVision()}>Retry</button>}<Toggle label="Person separation" checked={preset.segmentation} onChange={v => setPreset({ ...preset, segmentation: v })} /></div></div>
           {vision === 'demo' && <div className="demo-note"><WandSparkles size={13} /> This illustration uses a built-in mask. Switch to a webcam or clip to try the person model.</div>}
         </div>
         <div className="viewer-bottom"><span><LockKeyhole size={12} /> Your frames stay here. Always.</span><span><kbd>SPACE</kbd> pause <kbd>S</kbd> snapshot <kbd>R</kbd> record</span></div>
       </section>
-      <Controls preset={preset} region={region} onRegion={setRegion} onChange={setPreset} depthStatus={depthStatus} depthMessage={depthMessage} onDepthRetry={() => studio.current?.retryDepth()} onReset={() => choosePreset(PRESETS.find(p => p.name === preset.name) ?? PRESETS[0])} onPaletteImport={() => paletteInput.current?.click()} onPaletteExport={() => exportJson(preset[region].palette, 'vxl-palette.json')} />
+      <Controls faceStatus={faceStatus} faceMessage={faceMessage} onFaceRetry={() => studio.current?.retryFace()} showFaceRegion={showFaceRegion} onShowFaceRegion={setShowFaceRegion} preset={preset} region={region} onRegion={setRegion} onChange={setPreset} depthStatus={depthStatus} depthMessage={depthMessage} onDepthRetry={() => studio.current?.retryDepth()} onColorReference={() => studio.current?.refreshColorReference()} onReset={() => choosePreset(PRESETS.find(p => p.name === preset.name) ?? PRESETS[0])} onPaletteImport={() => paletteInput.current?.click()} onPaletteExport={() => exportJson(preset[region].palette, 'vxl-palette.json')} />
     </main>
     <footer className="app-footer"><span><span className="footer-mark">▦</span> MADE OF LITTLE THINGS</span><span>{preset.name} <i>/</i> {preset[region].palette.length} colors <i>/</i> {effects} effects</span><span>v0.1.0 <span className="footer-dot" /> LOCAL PROCESSING</span></footer>
     {notice && <div className="toast" role="status"><Check size={16} />{notice}</div>}
     {dragging && <div className="drop-overlay"><Upload size={40} /><h2>Drop a video. Make it pixels.</h2><p>MP4, WebM, MOV · processed on your device</p></div>}
-    {about && <div className="modal-backdrop" onClick={() => setAbout(false)}><section className="about-modal" role="dialog" aria-modal="true" aria-labelledby="about-title" onClick={e => e.stopPropagation()}><button className="icon-button modal-close" aria-label="Close about" onClick={() => setAbout(false)}><X size={18} /></button><span className="eyebrow">VXL / PROTOTYPE 01</span><h2 id="about-title">Real life. Little pixels.</h2><p>Use a webcam or a video file, choose a look, and make it yours. Every image effect and person mask is processed locally.</p><h3>A few things to know</h3><p>Person separation groups people together. Furniture recognition and individual object tracking are planned for later builds.</p><p>The studio scene is an original generated illustration with a known mask. It is a playground for effects, not a test of person recognition.</p><p>Recordings are silent clips, limited to 5 minutes or 200 MB. The browser selects the supported format. Palette and preset files use JSON.</p><p>Phone webcams and capture cards can work when your operating system exposes them as camera devices. Direct phone pairing and a dedicated desktop application are future milestones.</p><button className="primary-button" onClick={() => setAbout(false)}>Back to the studio</button></section></div>}
+    {about && <div className="modal-backdrop" onClick={() => setAbout(false)}><section className="about-modal" role="dialog" aria-modal="true" aria-labelledby="about-title" onClick={e => e.stopPropagation()}><button className="icon-button modal-close" aria-label="Close about" onClick={() => setAbout(false)}><X size={18} /></button><span className="eyebrow">VXL / PROTOTYPE 01</span><h2 id="about-title">Real life. Little pixels.</h2><p>Use a webcam or a video file, choose a look, and make it yours. Every image effect and person mask is processed locally.</p><h3>A few things to know</h3><p>Person separation groups people together. Furniture recognition and individual object tracking are planned for later builds.</p><p>The studio scene is an original generated illustration with a known mask. It is a playground for effects, not a test of person recognition.</p><p>Recordings are silent clips, limited to 5 minutes or 200 MB. The browser selects the supported format. Import palettes as PNG or JSON. Exported palettes and presets use JSON.</p><p>Phone webcams and capture cards can work when your operating system exposes them as camera devices. Direct phone pairing and a dedicated desktop application are future milestones.</p><button className="primary-button" onClick={() => setAbout(false)}>Back to the studio</button></section></div>}
     <input ref={fileInput} type="file" accept="video/*" hidden aria-label="Open video file" onChange={e => { openVideo(e.target.files?.[0]); e.target.value = ''; }} />
-    <input ref={paletteInput} type="file" accept=".json,application/json" hidden aria-label="Import palette file" onChange={e => { void importJson(e.target.files?.[0], 'palette'); e.target.value = ''; }} />
-    <input ref={presetInput} type="file" accept=".json,application/json" hidden aria-label="Import preset file" onChange={e => { void importJson(e.target.files?.[0], 'preset'); e.target.value = ''; }} />
+    <input ref={paletteInput} type="file" accept=".json,application/json,.png,image/png" hidden aria-label="Import palette file" onChange={e => { void importFile(e.target.files?.[0], 'palette'); e.target.value = ''; }} />
+    <input ref={presetInput} type="file" accept=".json,application/json" hidden aria-label="Import preset file" onChange={e => { void importFile(e.target.files?.[0], 'preset'); e.target.value = ''; }} />
   </div>;
 }

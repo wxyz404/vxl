@@ -28,9 +28,11 @@ On Windows, you can also double-click **run.bat** after installing Node.js and p
 - Dark, colored, or selective outlines; outline thickness; internal edges; light direction; deterministic Bayer dithering; stipple and hatch textures.
 - Motion-aligned contour history, one-sided silhouette bands, and separate contour smoothing/outline stability controls; old presets remain compatible.
 - Separate person/background treatments, using a local MediaPipe model in a worker. All people share one foreground category.
+- **Experimental Settings → Face readability** (off by default): Readable portrait and Sprite portrait preserve facial detail within a conservative face region, using the active palette. Includes strength, feature emphasis, optional mild exaggeration, a preview-only guide, and separate inference timing. Install its optional local model with `pnpm models:setup -- --face`. It tracks one face; small, obscured, or rapidly moving faces can fall back to ordinary styling.
+- **Experimental Settings → Palette interpretation**: Palette mood, Palette correspondence, and an editable five-stop Tonal ramp reinterpret source colors before palette matching. Choose Perceptual nearest for direct color matching. Each region has its own method and strength; references stay fixed during video until refreshed or the scene/source changes.
 - **Experimental Settings → Depth-aware styling** (off by default): relative scene depth guides atmospheric color, contrast, saturation, texture, clusters, and outlines. Includes depth/plane previews. Camera/video use a lazily loaded depth model; the illustration uses authored demo depth. See the [research, controls, comparison, and limitations](docs/DEPTH.md).
 - Original/filtered comparison, pause, performance details, and 15/30 FPS caps.
-- PNG snapshots, silent browser-supported video recording, JSON palettes and presets, and locally remembered settings.
+- PNG snapshots, silent browser-supported video recording, PNG/JSON palette imports, JSON palette/preset exports, and locally remembered settings.
 - Camera-error recovery, model-failure whole-frame fallback, source-generation guards, matching frame/mask ownership, context-loss recovery, and camera/bitmap/worker cleanup.
 
 The illustrated demo uses an **analytic mask**, clearly labeled in the interface. It is not evidence of neural recognition quality. Switch to real video to evaluate the model. The renderer approximates pixel art techniques; it does not claim hand-drawn or artist-equivalent results.
@@ -38,7 +40,7 @@ The illustrated demo uses an **analytic mask**, clearly labeled in the interface
 ## Controls and files
 
 - **Space:** pause/resume; **S:** snapshot; **R:** start/stop recording. Shortcuts are ignored while editing controls.
-- Click a palette swatch to edit its color. Import a JSON array of 2–32 six-digit hex colors, or an object with a `colors` array.
+- Click a palette swatch to edit its color. **Import palette** accepts PNG swatch strips/grids or a JSON array of 2–32 six-digit hex colors (also an object with a `colors` array). PNG imports keep distinct colors in first-seen order, left to right then top to bottom, and skip fully transparent pixels. Use a flat palette image with 2–32 colors; images with more colors are rejected. PNG limits: 4 MB and 4,194,304 pixels; JSON limit: 64 KB. The palette applies to the selected region and stays on your device.
 - Save/open a complete version 1 JSON preset, including both region styles. Invalid or oversized files are rejected before applying.
 - Recording is silent, limited to 5 minutes or 200 MB, and uses a supported WebM/MP4 encoder. Clips use an integer enlargement of the logical grid up to 640 pixels on the longest edge to keep encoding practical on laptops. Source and resolution changes are locked during recording. Save clips before closing the page.
 

@@ -16,7 +16,10 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "compare:outlines": "node scripts/compare-outlines.mjs",
-    "compare:depth": "node scripts/compare-depth.mjs"
+    "compare:depth": "node scripts/compare-depth.mjs",
+    "compare:palettes": "node scripts/compare-palette-mapping.mjs",
+    "compare:faces": "node scripts/compare-faces.mjs",
+    "benchmark:faces": "node scripts/benchmark-faces.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "3.8.1",

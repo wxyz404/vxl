@@ -11,3 +11,6 @@ public/vision/
 .env.*
 !.env.example
 !.env.sample
+
+# Local research notes and generated comparison reports
+/docs/

@@ -6,6 +6,8 @@ VXL uses installed dependencies under their respective licenses. Preserve their 
 | --- | --- |
 | MediaPipe Tasks Vision runtime | Apache-2.0; https://github.com/google-ai-edge/mediapipe |
 | Landscape selfie segmentation model | Google MediaPipe pretrained model; https://developers.google.com/edge/mediapipe/solutions/vision/image_segmenter and the linked model card |
+| Optional Face Landmarker version-1 bundle | Google MediaPipe; Apache-2.0 model card: https://storage.googleapis.com/mediapipe-assets/Model%20Card%20MediaPipe%20Face%20Mesh%20V2.pdf |
+| NASA Eileen Collins portrait test fixture | Public domain, distributed by scikit-image; https://scikit-image.org/docs/stable/api/skimage.data.html#skimage.data.astronaut |
 | React and React DOM | MIT; https://github.com/facebook/react |
 | Lucide icons | ISC; https://github.com/lucide-icons/lucide |
 | Zod | MIT; https://github.com/colinhacks/zod |
