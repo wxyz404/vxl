@@ -1,4 +1,4 @@
-import { DemoSource, FileSource, explainCaptureError } from '../capture/sources';
+import { DemoSource, FileSource, ImageSource, explainCaptureError } from '../capture/sources';
 import { PixelRenderer } from '../render/renderer';
 import { PersonSegmenter } from '../vision/segmenter';
 import type { Preset } from './presets';
@@ -9,6 +9,7 @@ import type { DepthStatus } from './types';
 import type { FaceStatus } from './types';
 import { FaceTracker } from '../vision/face';
 import { faceGeometry } from '../vision/face-geometry';
+import { processingPolicy, settleFrame } from './file-processing';
 
 export interface StudioCallbacks {
   onStats(stats: StudioStats): void;
@@ -47,6 +48,7 @@ export class Studio {
   private depth: SceneDepthEstimator;
   private face: FaceTracker;
   private faceOverlay?: HTMLCanvasElement;
+  private work = new AbortController();
   paused = false;
   fpsLimit = 30;
 
@@ -71,13 +73,18 @@ export class Studio {
   };
 
   async setSource(source: FrameSource) {
+    this.cancelWork();
     const generation = ++this.generation;
+    this.segmenter.dispose(); this.segmenter = new PersonSegmenter();
     this.depth.dispose();
     this.face.dispose();
     this.source?.stop(); this.source = undefined;
     this.frame?.image.close(); this.frame = undefined;
     this.renderer.resetHistory(); this.splitLastFrame = false; this.lastSourceTime = 0; this.previousScene = undefined; this.sourceEnded = false;
+    this.stats.mediaTime = this.stats.mediaDuration = this.stats.processingMs = undefined;
+    this.stats.processingWaitExpired = false;
     try {
+      if (source instanceof FileSource) source.configureProcessing(this.preset.fileProcessing > 0);
       await source.start();
       if (this.disposed || generation !== this.generation) { source.stop(); return; }
       this.source = source; this.paused = false; this.visionFailed = false;
@@ -89,9 +96,12 @@ export class Studio {
         }, { once: true });
       }
       if (source instanceof FileSource) {
-        source.video.addEventListener('seeking', () => { ++this.generation; this.renderer.resetHistory(); this.depth.reset(); this.face.reset(); });
+        source.video.addEventListener('seeking', () => {
+          if (this.source !== source || source.stepping) return;
+          this.cancelWork(); ++this.generation; this.renderer.resetHistory(); this.depth.reset(); this.face.reset();
+        });
         source.video.addEventListener('ended', () => {
-          if (this.source !== source || this.disposed) return;
+          if (this.source !== source || this.disposed || source.stepping) return;
           this.sourceEnded = true;
           // A short clip can end before its first queued bitmap has been painted.
           if (this.frame) { this.paused = true; this.callbacks.onEnded(); }
@@ -104,9 +114,15 @@ export class Studio {
 
   setPreset(preset: Preset) {
     if (this.disposed) return;
+    this.cancelWork();
+    const processingChanged = this.preset.fileProcessing !== preset.fileProcessing;
     const faceOnly=JSON.stringify({...this.preset,face:undefined})===JSON.stringify({...preset,face:undefined});
     if (this.preset.segmentation !== preset.segmentation) { ++this.generation; this.visionFailed = false; }
     this.preset = preset;
+    if (processingChanged && this.source instanceof FileSource) {
+      ++this.generation; this.depth.reset(); this.face.reset(); this.previousScene = undefined;
+      this.source.configureProcessing(preset.fileProcessing > 0, this.paused);
+    }
     if(!faceOnly){this.renderer.resetHistory();this.updateVisionStatus();}
     this.dirty = true;
     if (!preset.depth.enabled) this.depth.dispose();
@@ -123,11 +139,17 @@ export class Studio {
   retryFace() {this.face.dispose();this.dirty=true;}
   setFaceOverlay(canvas?:HTMLCanvasElement) {this.faceOverlay=canvas;this.dirty=true;}
   refreshColorReference() { this.renderer.refreshColorReference(); this.dirty = true; }
+  private cancelWork() { this.work.abort(); this.work = new AbortController(); }
   setPaused(paused: boolean) {
+    if (this.source?.kind === 'image') return;
+    this.cancelWork();
     this.paused = paused;
     if (this.source instanceof FileSource) {
       if (paused) this.source.video.pause();
-      else { if (this.source.video.ended) { this.source.video.currentTime = 0; this.sourceEnded = false; this.renderer.resetHistory(); } void this.source.video.play().catch(error => this.callbacks.onError(explainCaptureError(error))); }
+      else {
+        if (this.sourceEnded || this.source.video.ended || this.source.finished) { this.source.restart(); this.sourceEnded = false; this.renderer.resetHistory(); this.depth.reset(); this.face.reset(); }
+        if (!this.source.stepping) void this.source.video.play().catch(error => this.callbacks.onError(explainCaptureError(error)));
+      }
     }
     if (!paused) this.renderer.resetHistory();
   }
@@ -152,7 +174,7 @@ export class Studio {
       return;
     }
     if (!this.source || now - this.lastCapture < 1000 / this.fpsLimit - 1) return;
-    if (this.busy) { this.dropped++; return; }
+    if (this.busy) { if (!(this.source instanceof FileSource && this.source.stepping)) this.dropped++; return; }
     this.lastCapture = now;
     this.busy = true;
     void this.process(now).finally(() => { this.busy = false; });
@@ -162,7 +184,7 @@ export class Studio {
     const generation = this.generation;
     try {
       const frame = this.frame!;
-      const output = await this.segmenter.segment({ ...frame, image: await createImageBitmap(frame.image), timestamp: performance.now(), generation });
+      const output = await this.segmenter.segment({ ...frame, image: await createImageBitmap(frame.image), generation });
       if (this.disposed || generation !== this.generation) { output.image.close(); return; }
       this.frame?.image.close(); this.frame = output;
       this.callbacks.onVision('ready'); this.paint(output);
@@ -176,11 +198,12 @@ export class Studio {
 
   private async process(now: number) {
     const source = this.source!, generation = this.generation;
+    const signal = this.work.signal, started = performance.now();
     let packet: FramePacket | null = null;
     try {
       packet = await source.capture(now, generation);
       if (!packet) { if ((this.dirty || (this.preset.depth.enabled && this.depth.needsRepaint) || (this.preset.face.enabled && this.face.needsRepaint)) && this.frame) this.paint(this.frame); return; }
-      if (this.disposed || generation !== this.generation) { packet.image.close(); return; }
+      if (this.disposed || generation !== this.generation || signal.aborted) { packet.image.close(); packet = null; return; }
       // Drop a queued frame when paused during capture; preserve the frozen frame.
       if (this.paused) { packet.image.close(); return; }
       if (source instanceof FileSource) {
@@ -196,33 +219,58 @@ export class Studio {
           if (generation === this.generation && !this.disposed) {
             this.visionFailed = true; this.callbacks.onVision('error');
             this.callbacks.onError(`${explainCaptureError(error)} Whole-frame styling is still available.`);
+            if (source instanceof ImageSource) source.retryCapture();
           }
           return;
         }
       }
-      if (this.disposed || generation !== this.generation || this.paused) { packet.image.close(); return; }
+      if (this.disposed || generation !== this.generation || this.paused || signal.aborted) { packet.image.close(); packet = null; return; }
+      const effort = source.kind === 'file' || source.kind === 'image' ? processingPolicy(this.preset.fileProcessing) : processingPolicy(0);
+      this.stats.processingWaitExpired = false;
+      if (effort.passes > 0) {
+        const held = packet, thumbnail = this.sceneThumbnail(held);
+        const result = await settleFrame(() => {
+          this.updateEstimates(held, thumbnail, true);
+          return (!this.preset.depth.enabled || this.depth.hasCompleted(held)) &&
+            (!this.preset.face.enabled || this.preset.face.strength === 0 || this.face.hasCompleted(held));
+        }, effort.waitMs, signal);
+        if (result.cancelled || this.disposed || generation !== this.generation) { packet.image.close(); packet = null; return; }
+        this.stats.processingWaitExpired = result.expired;
+      }
       this.frame?.image.close(); this.frame = packet; packet = null;
       this.paint(this.frame); this.frames++;
-      if (this.sourceEnded) { this.paused = true; this.callbacks.onEnded(); }
+      this.stats.processingMs = performance.now() - started;
+      if (source instanceof FileSource) {
+        this.stats.mediaTime = source.stepping ? source.sampleTime : source.video.currentTime; this.stats.mediaDuration = source.duration;
+        if (source.stepping) { source.commitFrame(this.fpsLimit); if (source.finished) this.sourceEnded = true; }
+      }
+      if (this.sourceEnded || source.kind === 'image') { this.paused = true; this.callbacks.onEnded(); }
     } catch (error) {
       packet?.image.close();
-      if (!this.disposed && generation === this.generation) { this.paused = true; this.callbacks.onEnded(); this.callbacks.onError(explainCaptureError(error)); }
+      if (!this.disposed && generation === this.generation && !signal.aborted) { this.paused = true; this.callbacks.onEnded(); this.callbacks.onError(explainCaptureError(error)); }
+    } finally {
+      if (signal.aborted && source instanceof ImageSource && source === this.source && !this.frame) source.retryCapture();
     }
   }
-  private paint(frame: FramePacket) {
-    const start = performance.now();
+  private sceneThumbnail(frame: FramePacket) {
     this.sceneContext.drawImage(frame.image, 0, 0, 16, 9);
     const thumbnail = this.sceneContext.getImageData(0, 0, 16, 9).data;
     if (this.previousScene && sceneDifference(this.previousScene, thumbnail) > 0.22) { this.renderer.refreshColorReference(); this.depth.reset(); this.face.reset(); }
     this.previousScene = thumbnail;
+    return thumbnail;
+  }
+  private updateEstimates(frame: FramePacket, thumbnail: Uint8ClampedArray, exact: boolean) {
     let renderFrame = frame;
     if (this.preset.depth.enabled) {
       if (this.source?.kind === 'demo') this.callbacks.onDepth?.('demo');
-      else renderFrame = { ...renderFrame, depth: this.depth.update(frame, thumbnail) };
+      else renderFrame = { ...renderFrame, depth: this.depth.update(frame, thumbnail, exact) };
     }
     if(this.preset.face.enabled&&this.preset.face.strength>0) {
       if(this.source?.kind==='demo')this.callbacks.onFace?.('demo');
-      else renderFrame={...renderFrame,face:this.face.update(frame,this.paused)};
+      else {
+        const field = this.face.update(frame, this.paused || exact);
+        renderFrame = { ...renderFrame, face: exact && field?.observation.timestamp !== frame.timestamp ? undefined : field };
+      }
       const field=renderFrame.face;
       if(field&&this.source?.kind!=='demo') {
         const ratio=Math.min(1,this.preset.resolution/Math.max(frame.image.width,frame.image.height));
@@ -230,6 +278,13 @@ export class Studio {
         if(geometry&&field.allowWarp)this.callbacks.onFace?.(geometry.width<12?'small':'tracking');
       }
     } else renderFrame={...renderFrame,face:undefined};
+    return renderFrame;
+  }
+  private paint(frame: FramePacket) {
+    const start = performance.now();
+    const uploaded = this.source?.kind === 'image' || this.source?.kind === 'file';
+    const effort = processingPolicy(uploaded ? this.preset.fileProcessing : 0);
+    const renderFrame = { ...this.updateEstimates(frame, this.sceneThumbnail(frame), uploaded && (effort.passes > 0 || this.source?.kind === 'image')), refinementPasses: effort.passes };
     const split = Boolean(this.preset.segmentation && frame.mask);
     if (split !== this.splitLastFrame) this.renderer.resetHistory();
     this.splitLastFrame = split;
@@ -243,6 +298,7 @@ export class Studio {
     this.dirty = false;
   }
   dispose() {
+    this.cancelWork();
     this.disposed = true; ++this.generation; cancelAnimationFrame(this.raf);
     this.source?.stop(); this.segmenter.dispose(); this.frame?.image.close(); this.frame = undefined;
     this.depth.dispose();

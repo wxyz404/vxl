@@ -31,7 +31,7 @@ export const styleSchema = z.object({
   texture: z.enum(['off', 'stipple', 'hatch']),
   textureStrength: z.number().min(0).max(1),
   contrast: z.number().min(0.5).max(1.8),
-  saturation: z.number().min(0).max(1.5),
+  saturation: z.number().min(0).max(2),
 });
 export const depthSchema = z.object({
   enabled: z.boolean().default(false),
@@ -61,6 +61,7 @@ export const presetSchema = z.object({
   name: z.string().trim().min(1).max(60),
   resolution: z.union([z.literal(160), z.literal(240), z.literal(320), z.literal(480)]),
   segmentation: z.boolean(),
+  fileProcessing: z.number().int().min(0).max(4).default(0),
   stability: z.number().min(0).max(1),
   outlineStability: z.number().min(0).max(1).default(0.65),
   contourSmoothing: z.number().min(0).max(1).default(0.55),
@@ -83,10 +84,10 @@ function style(colors: readonly string[], overrides: Partial<RegionStyle> = {}):
 }
 
 export const PRESETS: Preset[] = [
-  { version: 1, name: 'Pixel Video', resolution: 320, segmentation: false, stability: 0.5, outlineStability: 0.5, contourSmoothing: 0.5, lightAngle: 315,
-    foreground: style(PALETTES.dawnbringer.colors, { simplify: 0.5, clusters: 0.2, contrast: 0.8, saturation: 1, internalEdges: 0.9, dither: 0.05, colorMapping: { ...DEFAULT_COLOR_MAPPING, mode: 'mood', ramp: [] } }),
+  { version: 1, name: 'Pixel Video', resolution: 320, segmentation: false, fileProcessing: 0, stability: 0.5, outlineStability: 0.5, contourSmoothing: 0.5, lightAngle: 315,
+    foreground: style(PALETTES.dawnbringer.colors, { simplify: 0.5, clusters: 0.2, contrast: 0.8, saturation: 1.5, internalEdges: 0.9, dither: 0.05, colorMapping: { ...DEFAULT_COLOR_MAPPING, mode: 'mood', ramp: [] } }),
     background: style(PALETTES.studio.colors, { simplify: 0.5, clusters: 0.5, internalEdges: 0.08, dither: 0.08 }), depth: { ...DEFAULT_DEPTH }, face: { ...DEFAULT_FACE } },
-  { version: 1, name: 'Sprite Scene', resolution: 160, segmentation: false, stability: 0.65, outlineStability: 0.75, contourSmoothing: 0.65, lightAngle: 315,
+  { version: 1, name: 'Sprite Scene', resolution: 160, segmentation: false, fileProcessing: 0, stability: 0.65, outlineStability: 0.75, contourSmoothing: 0.65, lightAngle: 315,
     foreground: style(PALETTES.grove.colors, { simplify: 0.6, clusters: 0.65, dither: 0.22, contrast: 1.12 }),
     background: style(PALETTES.grove.colors, { simplify: 0.75, clusters: 0.8, dither: 0.16, internalEdges: 0.04, outline: 'colored' }), depth: { ...DEFAULT_DEPTH }, face: { ...DEFAULT_FACE } },
 ];

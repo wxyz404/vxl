@@ -1,7 +1,8 @@
 import { ChevronDown, Download, Upload, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
 import { PALETTES, type Preset, type Region, type RegionStyle, type DepthSettings } from '../core/presets';
-import type { DepthStatus, FaceStatus } from '../core/types';
+import type { DepthStatus, FaceStatus, FrameSource, StudioStats } from '../core/types';
+import { FileProcessingControls } from './FileProcessingControls';
 import { FaceControls } from './FaceControls';
 import { PaletteMappingControls } from './PaletteMappingControls';
 import { Slider, Toggle } from './ControlInputs';
@@ -14,8 +15,9 @@ interface Props {
   onColorReference(): void;
   faceStatus?:FaceStatus; faceMessage?:string; onFaceRetry():void;
   showFaceRegion:boolean; onShowFaceRegion(value:boolean):void;
+  sourceKind: FrameSource['kind']; stats: StudioStats; recording: boolean;
 }
-export function Controls({ preset, region, onRegion, onChange, onPaletteImport, onPaletteExport, onReset, depthStatus = 'off', depthMessage, onDepthRetry, onColorReference, faceStatus='off',faceMessage,onFaceRetry,showFaceRegion,onShowFaceRegion }: Props) {
+export function Controls({ preset, region, onRegion, onChange, onPaletteImport, onPaletteExport, onReset, depthStatus = 'off', depthMessage, onDepthRetry, onColorReference, faceStatus='off',faceMessage,onFaceRetry,showFaceRegion,onShowFaceRegion,sourceKind,stats,recording }: Props) {
   const [tab, setTab] = useState('art');
   const style = preset[region];
   function update<K extends keyof RegionStyle>(key: K, value: RegionStyle[K]) { onChange({ ...preset, [region]: { ...style, [key]: value } }); }
@@ -35,6 +37,7 @@ export function Controls({ preset, region, onRegion, onChange, onPaletteImport, 
     </div>
     {region === 'background' && !preset.segmentation && <p className="field-note">Enable person separation to apply these background settings.</p>}
     <div id="settings-panel-experimental" role="tabpanel" aria-labelledby="settings-tab-experimental" className="settings-panel" hidden={tab !== 'experimental'}>
+      <FileProcessingControls value={preset.fileProcessing} onChange={fileProcessing => onChange({ ...preset, fileProcessing })} source={sourceKind} stats={stats} recording={recording} />
       <FaceControls value={preset.face} onChange={face=>onChange({...preset,face})} status={faceStatus} message={faceMessage} onRetry={onFaceRetry} showRegion={showFaceRegion} onShowRegion={onShowFaceRegion}/>
       <PaletteMappingControls style={style} onChange={value => update('colorMapping', value)} onRefresh={onColorReference} />
       <section className="control-section depth-controls">
@@ -71,7 +74,7 @@ export function Controls({ preset, region, onRegion, onChange, onPaletteImport, 
       <Slider label="Simplification" value={style.simplify} onChange={v => update('simplify', v)} />
       <Slider label="Cluster cleanup" value={style.clusters} onChange={v => update('clusters', v)} />
       <Slider label="Contrast" min={0.5} max={1.8} value={style.contrast} display={`${style.contrast.toFixed(2)}×`} onChange={v => update('contrast', v)} />
-      <Slider label="Saturation" min={0} max={1.5} value={style.saturation} onChange={v => update('saturation', v)} />
+      <Slider label="Saturation" min={0} max={2} value={style.saturation} onChange={v => update('saturation', v)} />
     </section>
     <section className="control-section"><div className="section-heading"><h3>Outlines</h3><span>PIXEL EDGES</span></div>
       <div className="select-wrap"><select aria-label="Outline style" value={style.outline} onChange={e => update('outline', e.target.value as RegionStyle['outline'])}><option value="off">No outlines</option><option value="dark">Dark outline</option><option value="colored">Palette-colored</option><option value="selective">Selective outline</option></select><ChevronDown size={14} /></div>

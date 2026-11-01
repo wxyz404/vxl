@@ -18,6 +18,7 @@ export class SceneDepthEstimator {
   private request?: { id: number; epoch: number; timestamp: number; generation: number };
   private timer?: ReturnType<typeof setTimeout>;
   private status: DepthStatus = 'off';
+  private exactField?: DepthField;
   constructor(private notify: (status: DepthStatus, message?: string) => void, private repaint: () => void) {}
   private report(status: DepthStatus, message?: string) {
     if (status === this.status && !message) return;
@@ -42,22 +43,23 @@ export class SceneDepthEstimator {
       if (result.values && result.values.length === result.width * result.height) {
         const now = performance.now();
         const latency = Math.max(Number.isFinite(result.inferenceMs) ? result.inferenceMs : 0, now - this.lastRequest);
-        this.history.accept({ values: result.values, width: result.width, height: result.height, timestamp: request.timestamp, generation: request.generation }, latency, now);
+        this.exactField = { values: result.values, width: result.width, height: result.height, timestamp: request.timestamp, generation: request.generation, strength: 1 };
+        this.history.accept(this.exactField, latency, now);
       }
       this.repaint();
     };
     this.post({ type: 'initialize' });
   }
-  update(frame: FramePacket, scene: Uint8ClampedArray): DepthField | undefined {
+  update(frame: FramePacket, scene: Uint8ClampedArray, exact = false): DepthField | undefined {
     // Compare adjacent frames for cuts, not each frame against an increasingly old snapshot.
     if ((this.generation !== undefined && this.generation !== frame.generation) || (this.previousScene && sceneDifference(this.previousScene, scene) > 0.22)) this.reset();
     this.generation = frame.generation; this.previousScene = scene.slice();
-    if (this.failed) return this.history.sample(frame.timestamp, frame.generation, performance.now());
+    if (this.failed) return exact ? undefined : this.history.sample(frame.timestamp, frame.generation, performance.now());
     if (!this.worker) {
       try { this.initialize(); } catch (error) { this.fail(String(error)); return; }
     }
     const needsEstimate = this.request?.timestamp !== frame.timestamp || this.request.epoch !== this.epoch || this.request.generation !== frame.generation;
-    if (this.ready && !this.pending && needsEstimate && performance.now() - this.lastRequest >= 250) {
+    if (this.ready && !this.pending && needsEstimate && (exact || performance.now() - this.lastRequest >= 250)) {
       this.pending = true; this.lastRequest = performance.now();
       const request = this.request = { id: ++this.id, epoch: this.epoch, timestamp: frame.timestamp, generation: frame.generation };
       // Resize the copy, never transfer the image owned by the renderer or segmenter.
@@ -67,12 +69,15 @@ export class SceneDepthEstimator {
         this.post({ type: 'estimate', id: request.id, image }, [image]);
       }).catch(error => { if (request.epoch === this.epoch) this.fail(String(error)); });
     }
-    const field = this.history.sample(frame.timestamp, frame.generation, performance.now());
+    // Exact-frame output has no temporal blend to animate on the frozen canvas.
+    if (exact) this.history.needsRepaint = false;
+    const field = exact ? this.exactField?.timestamp === frame.timestamp && this.exactField.generation === frame.generation ? this.exactField : undefined : this.history.sample(frame.timestamp, frame.generation, performance.now());
     if (this.ready) this.report(field ? frame.timestamp - field.timestamp > field.maxAgeMs! - 1000 ? 'holding' : 'ready' : this.history.hasEstimate ? 'stale' : 'estimating');
     return field;
   }
   get needsRepaint() { return this.history.needsRepaint; }
-  reset() { this.epoch++; this.history.reset(); this.previousScene = undefined; this.generation = undefined; this.lastRequest = -Infinity; }
+  hasCompleted(frame: FramePacket) { return this.failed || Boolean(this.ready && !this.pending && this.request?.epoch === this.epoch && this.request.timestamp === frame.timestamp && this.request.generation === frame.generation); }
+  reset() { this.epoch++; this.history.reset(); this.exactField = undefined; this.previousScene = undefined; this.generation = undefined; this.lastRequest = -Infinity; }
   private fail(message: string) {
     this.failed = true; this.pending = false; clearTimeout(this.timer); this.worker?.terminate(); this.worker = undefined;
     this.history.stop(performance.now()); this.report('error', message); this.repaint();

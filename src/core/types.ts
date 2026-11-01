@@ -38,10 +38,12 @@ export interface FramePacket {
   inferenceMs?: number;
   depth?: DepthField;
   face?: FaceField;
+  /** Additional spatial passes for uploaded media only. Zero preserves ordinary rendering. */
+  refinementPasses?: number;
 }
 
 export interface FrameSource {
-  readonly kind: 'demo' | 'camera' | 'file';
+  readonly kind: 'demo' | 'camera' | 'file' | 'image';
   readonly label: string;
   start(): Promise<void>;
   capture(timestamp: number, generation: number): Promise<FramePacket | null>;
@@ -62,4 +64,8 @@ export interface StudioStats {
   dropped: number;
   logicalWidth: number;
   logicalHeight: number;
+  mediaTime?: number;
+  mediaDuration?: number;
+  processingMs?: number;
+  processingWaitExpired?: boolean;
 }

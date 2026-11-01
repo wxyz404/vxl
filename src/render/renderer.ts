@@ -23,6 +23,8 @@ export class PixelRenderer {
   private depthMix = 1;
   private lastDepth?: FramePacket['depth'];
   private lastFace?: FramePacket['face'];
+  private lastRefinement = 0;
+  private refinementTargets: Target[] = [];
   private faceTargets: Target[] = [];
   private faceFlows: { from: number; to: number; target: Target }[] = [];
   private alignedFace?: Target;
@@ -61,7 +63,7 @@ export class PixelRenderer {
     this.vao = gl.createVertexArray()!;
     gl.bindVertexArray(this.vao);
     const effects = { ...shaders, ...contours, ...faceShaders };
-    for (const name of ['prepare', 'motion', 'sample', 'quantize', 'clusters', 'patterns', 'geometry', 'stabilize', 'finish', 'display', 'faceAlign', 'faceSample', 'faceQuantize', 'faceComposite'] as const) {
+    for (const name of ['prepare', 'refine', 'motion', 'sample', 'quantize', 'clusters', 'patterns', 'geometry', 'stabilize', 'finish', 'display', 'faceAlign', 'faceSample', 'faceQuantize', 'faceComposite'] as const) {
       const handle = gl.createProgram()!;
       const vertex = this.compile(gl.VERTEX_SHADER, shaders.vertex);
       const fragment = this.compile(gl.FRAGMENT_SHADER, effects[name]);
@@ -271,6 +273,8 @@ export class PixelRenderer {
   render(frame: FramePacket, preset: Preset): { width: number; height: number } {
     if (this.disposed || this.gl.isContextLost()) throw new Error('The graphics device was reset. Reload the renderer to continue.');
     const gl = this.gl;
+    const refinement = Math.max(0, Math.min(4, Math.round(frame.refinementPasses ?? 0)));
+    if (refinement !== this.lastRefinement) this.resetHistory();
     const sameSceneStyle=preset===this.lastPreset||Boolean(this.lastPreset&&JSON.stringify({...this.lastPreset,face:undefined})===JSON.stringify({...preset,face:undefined}));
     if (!this.reset && frame.timestamp===this.lastTimestamp && frame.generation===this.lastGeneration && sameSceneStyle && frame.depth===this.lastDepth) {
       if(frame.face!==this.lastFace||preset!==this.lastPreset) {
@@ -333,6 +337,14 @@ export class PixelRenderer {
       ['finish', this.targets[6], this.depthEnabled && preset.depth.detail > 0 ? this.targets[4].texture : this.targets[5].texture, [['uSource', base.texture], ['uContours', stroke.texture], ['uGeometry', geometry.texture]]],
       ['display', null, this.targets[6].texture, []],
     ];
+    if (refinement > 0) {
+      if (!this.refinementTargets.length) for (let i=0;i<2;i++) this.refinementTargets.push(this.target(width,height));
+      passes[0] = ['prepare', this.refinementTargets[0], this.image, [['uMask', this.mask]]];
+      for (let i=0;i<refinement;i++) {
+        const input=this.refinementTargets[i%2], target=i===refinement-1?prepared:this.refinementTargets[1-i%2];
+        passes.splice(i+1,0,['refine',target,input.texture,[]]);
+      }
+    }
     // Dither can create fresh orphan pixels; clean distant clusters again after patterns.
     if (this.depthEnabled && preset.depth.detail > 0) passes.splice(passes.length - 2, 0, ['clusters', this.targets[4], this.targets[5].texture, [['uSource', base.texture]]]);
     for (const [name, target, input, extra] of passes) {
@@ -354,10 +366,11 @@ export class PixelRenderer {
     this.lastTimestamp=frame.timestamp; this.lastGeneration=frame.generation; this.lastPreset=preset;
     this.lastDepth=frame.depth;
     this.lastFace=frame.face;
+    this.lastRefinement=refinement;
     return { width, height };
   }
   resetHistory() { this.reset = true; this.history = 0; }
-  private releaseTargets() { this.targets.forEach(t => this.deleteTarget(t)); this.targets = [];this.clearFaceHistory();this.faceTargets.forEach(t=>this.deleteTarget(t));this.faceTargets=[]; }
+  private releaseTargets() { this.targets.forEach(t => this.deleteTarget(t)); this.targets = [];this.clearFaceHistory();this.faceTargets.forEach(t=>this.deleteTarget(t));this.faceTargets=[];this.refinementTargets.forEach(t=>this.deleteTarget(t));this.refinementTargets=[]; }
   dispose() {
     if (this.disposed) return;
     this.disposed = true; this.releaseTargets();

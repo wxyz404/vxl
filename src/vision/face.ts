@@ -54,7 +54,7 @@ export class FaceTracker {
     const estimated=this.observation?.timestamp===frame.timestamp&&this.observation.generation===frame.generation;
     // A frozen no-face result is final too; don't repeatedly infer the same frame.
     const completed=this.completedFrame===`${frame.generation}:${frame.timestamp}`;
-    if(this.ready&&!this.pending&&!already&&!estimated&&!completed&&now-this.lastAttempt>=1000/15) {
+    if(this.ready&&!this.pending&&!already&&!estimated&&!completed&&(frozen||now-this.lastAttempt>=1000/15)) {
       this.lastAttempt=now;
       const request=this.pending={id:++this.id,epoch:this.epoch,timestamp:frame.timestamp,generation:frame.generation,started:now};
       const scale=Math.min(1,640/Math.max(frame.image.width,frame.image.height));
@@ -76,6 +76,7 @@ export class FaceTracker {
     return strength?{observation,strength,allowWarp:this.noFaceAt===undefined}:undefined;
   }
   private completedFrame='';
+  hasCompleted(frame:FramePacket) {return this.failed||Boolean(this.ready&&!this.pending&&this.completedFrame===`${frame.generation}:${frame.timestamp}`);}
   get needsRepaint(){return Boolean(this.noFaceAt!==undefined&&performance.now()-this.noFaceAt<110);}
   reset() {
     this.epoch++;this.continuity++;this.observation=undefined;this.noFaceAt=undefined;this.lastFrame=undefined;this.completedFrame='';this.lastAttempt=-Infinity;

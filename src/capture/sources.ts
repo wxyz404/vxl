@@ -6,8 +6,8 @@ class VideoFrameCapture {
   private canvas = new OffscreenCanvas(1,1);
   private context = this.canvas.getContext('2d',{alpha:false})!;
   private lastTime = -1;
-  async capture(video: HTMLVideoElement,timestamp: number,generation: number):Promise<FramePacket|null> {
-    if(video.readyState<2||!video.videoWidth||!video.videoHeight||video.currentTime===this.lastTime) return null;
+  async capture(video: HTMLVideoElement,timestamp: number,generation: number,force=false):Promise<FramePacket|null> {
+    if(video.readyState<2||!video.videoWidth||!video.videoHeight||(!force&&video.currentTime===this.lastTime)) return null;
     const time=video.currentTime;
     if(this.canvas.width!==video.videoWidth||this.canvas.height!==video.videoHeight) {
       this.canvas.width=video.videoWidth;this.canvas.height=video.videoHeight;
@@ -48,18 +48,102 @@ export class FileSource implements FrameSource {
   readonly video = document.createElement('video');
   private url: string;
   private frames = new VideoFrameCapture();
+  private controller = new AbortController();
+  private started = false;
+  private nextSample = 0;
+  private timelineOrigin = 0;
+  private playbackError?: unknown;
+  stepping = false;
+  sampleTime = 0;
+  get duration() { return this.video.duration; }
+  get finished() { return this.stepping && this.nextSample >= this.duration - 0.0000001; }
   constructor(file: File) { this.label = file.name; this.url = URL.createObjectURL(file); }
   async start() {
     this.video.muted = true;
     this.video.loop = false;
     this.video.playsInline = true;
-    this.video.src = this.url;
-    await this.video.play();
+    await this.waitFor('loadeddata', () => { this.video.src = this.url; this.video.load(); });
+    this.started = true;
+    if (!this.stepping) await this.video.play();
   }
   async capture(timestamp: number, generation: number) {
-    return this.frames.capture(this.video,timestamp,generation);
+    if (this.playbackError) throw this.playbackError;
+    if (!this.stepping) return this.frames.capture(this.video,timestamp,generation);
+    // Some browser-recorded WebM files reveal their duration only after a seek.
+    if (!Number.isFinite(this.duration)) {
+      await this.waitFor('seeked', () => { this.video.currentTime = 1e10; });
+      if (!Number.isFinite(this.duration)) throw new Error('This clip has no finite duration. Try an MP4 or another video export.');
+    }
+    if (this.finished) return null;
+    const time = this.nextSample;
+    if (Math.abs(this.video.currentTime - time) > 0.00001 || this.video.readyState < 2) {
+      await this.waitFor('seeked', () => { this.video.currentTime = time; });
+    }
+    this.sampleTime = time;
+    // Media time preserves motion history even when processing takes several seconds.
+    return this.frames.capture(this.video, this.timelineOrigin + time * 1000, generation, true);
   }
-  stop() { this.video.pause(); this.video.removeAttribute('src'); this.video.load(); URL.revokeObjectURL(this.url); }
+  configureProcessing(enabled: boolean, paused = false) {
+    if (this.stepping === enabled) return;
+    this.controller.abort(); this.controller = new AbortController();
+    this.stepping = enabled; this.nextSample = this.video.currentTime;
+    this.timelineOrigin = performance.now() - this.nextSample * 1000;
+    this.playbackError = undefined;
+    if (enabled || paused) this.video.pause();
+    else if (this.started) void this.video.play().catch(error => { if (error?.name !== 'AbortError') this.playbackError = error; });
+  }
+  commitFrame(fps: number) { this.nextSample = this.sampleTime + 1 / fps; }
+  restart() {
+    this.nextSample = 0; this.timelineOrigin = performance.now();
+    if (!this.stepping) this.video.currentTime = 0;
+  }
+  private waitFor(event: 'loadeddata' | 'seeked', action: () => void): Promise<void> {
+    const signal = this.controller.signal;
+    return new Promise((resolve, reject) => {
+      const cleanup = () => { clearTimeout(timer); this.video.removeEventListener(event, done); this.video.removeEventListener('error', error); signal.removeEventListener('abort', abort); };
+      const done = () => { cleanup(); resolve(); };
+      const error = () => { cleanup(); reject(new Error(`The video could not be decoded. Try a supported MP4 or WebM file.${this.video.error?.message ? ` (${this.video.error.message})` : ''}`)); };
+      const abort = () => { cleanup(); reject(new DOMException('Source changed', 'AbortError')); };
+      const timer = setTimeout(error, 15_000);
+      this.video.addEventListener(event, done, { once: true }); this.video.addEventListener('error', error, { once: true });
+      signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) { abort(); return; }
+      try { action(); } catch (reason) { cleanup(); reject(reason); }
+    });
+  }
+  stop() { this.controller.abort(); this.started = false; this.video.pause(); this.video.removeAttribute('src'); this.video.load(); URL.revokeObjectURL(this.url); }
+}
+
+/** A still source yields one owned snapshot; edits reuse the held studio frame. */
+export class ImageSource implements FrameSource {
+  readonly kind = 'image' as const;
+  readonly label: string;
+  private bitmap?: ImageBitmap;
+  private delivered = false;
+  private stopped = false;
+  constructor(private file: File) { this.label = file.name; }
+  async start() {
+    if (!/\.(png|jpe?g)$/i.test(this.file.name) && !['image/png', 'image/jpeg'].includes(this.file.type)) throw new Error('Choose a PNG or JPG image.');
+    if (this.file.size > 32 * 1024 * 1024) throw new Error('Choose an image smaller than 32 MB.');
+    let image: ImageBitmap;
+    try { image = await createImageBitmap(this.file, { imageOrientation: 'from-image' }); }
+    catch { throw new Error('This image could not be decoded. Choose a valid PNG or JPG file.'); }
+    if (this.stopped) { image.close(); return; }
+    if (image.width * image.height > 16_777_216) { image.close(); throw new Error('Choose an image with at most 16 million pixels.'); }
+    // Composite transparent PNGs onto a predictable neutral background before styling.
+    const canvas = new OffscreenCanvas(image.width, image.height), context = canvas.getContext('2d')!;
+    context.fillStyle = '#202421'; context.fillRect(0, 0, canvas.width, canvas.height); context.drawImage(image, 0, 0); image.close();
+    const bitmap = await createImageBitmap(canvas);
+    if (this.stopped) bitmap.close(); else this.bitmap = bitmap;
+  }
+  async capture(timestamp: number, generation: number): Promise<FramePacket | null> {
+    if (this.delivered || !this.bitmap) return null;
+    this.delivered = true;
+    const image = await createImageBitmap(this.bitmap);
+    return { image, timestamp, generation };
+  }
+  retryCapture() { this.delivered = false; }
+  stop() { this.stopped = true; this.bitmap?.close(); this.bitmap = undefined; }
 }
 
 /** A generated test scene, not a demonstration of neural recognition. */

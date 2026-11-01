@@ -14,7 +14,10 @@ test('face controls style the paused demo, persist, and keep the diagnostic guid
   await expect(page.getByLabel('Face treatment',{exact:true})).toBeDisabled();await toggle.click();
   await expect(page.getByText('Authored demo face · not AI detection',{exact:true})).toBeVisible();
   await expect.poll(()=>canvas.evaluate(c=>(c as HTMLCanvasElement).toDataURL())).not.toBe(before);
+  const portrait=await canvas.evaluate(c=>(c as HTMLCanvasElement).toDataURL());
   await page.getByLabel('Face treatment',{exact:true}).selectOption('sprite');
+  // Control state changes before the next animation-frame repaint.
+  await expect.poll(()=>canvas.evaluate(c=>(c as HTMLCanvasElement).toDataURL())).not.toBe(portrait);
   const art=await canvas.evaluate(c=>(c as HTMLCanvasElement).toDataURL());
   await page.getByRole('switch',{name:'Show face region',exact:true}).click();await expect(page.getByTestId('face-overlay')).toBeVisible();
   await expect.poll(()=>page.getByTestId('face-overlay').evaluate(c=>{const canvas=c as HTMLCanvasElement,ctx=canvas.getContext('2d')!;return ctx.getImageData(0,0,canvas.width,canvas.height).data.some((v,i)=>i%4===3&&v>0);})).toBe(true);

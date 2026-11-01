@@ -1,6 +1,6 @@
 # VXL
 
-A local pixel art studio for webcams and video files. VXL separates recognition from rendering: the person model supplies a mask, and a GPU pipeline shapes the image with palettes, clusters, selective outlines, dithering, and texture.
+A local pixel art studio for webcams, video files, and PNG/JPG images. VXL separates recognition from rendering: the person model supplies a mask, and a GPU pipeline shapes the image with palettes, clusters, selective outlines, dithering, and texture.
 
 The current build is the **browser prototype**. A dedicated desktop app is an explicit next stage, with reusable capture, segmenter, renderer, and preset interfaces already separated from the UI.
 
@@ -22,7 +22,8 @@ On Windows, you can also double-click **run.bat** after installing Node.js and p
 
 ## Included
 
-- Webcam, local video, and an original animated illustration for experimenting without camera permission.
+- Webcam, local video, PNG/JPG images, and an original animated illustration for experimenting without camera permission.
+- **Experimental Settings → Uploaded media processing**: an off-by-default 0–4 slider adds spatial refinement and more time for matching face/depth estimates. Uploaded video advances sequentially on the selected 15/30 FPS sampling grid; processing can slow the preview. Higher effort can erase detail as well as quiet texture.
 - **Pixel Video** and **Sprite Scene** presets, with 160/240/320/480-pixel longest-edge resolutions and aspect-ratio preservation.
 - Fixed editable palettes, perceptual color mapping, mask-weighted downsampling, bilateral simplification, palette hysteresis, cluster cleanup, and palette-constrained selective antialiasing.
 - Dark, colored, or selective outlines; outline thickness; internal edges; light direction; deterministic Bayer dithering; stipple and hatch textures.
@@ -39,6 +40,7 @@ The illustrated demo uses an **analytic mask**, clearly labeled in the interface
 
 ## Controls and files
 
+- **Image file** opens a PNG/JPG, or drop it into the studio. The image stays still while you edit; **Snapshot** saves the art as PNG. Images are limited to 32 MB and 16,777,216 pixels. Transparent PNG areas are composited over a dark neutral background; output is opaque.
 - **Space:** pause/resume; **S:** snapshot; **R:** start/stop recording. Shortcuts are ignored while editing controls.
 - Click a palette swatch to edit its color. **Import palette** accepts PNG swatch strips/grids or a JSON array of 2–32 six-digit hex colors (also an object with a `colors` array). PNG imports keep distinct colors in first-seen order, left to right then top to bottom, and skip fully transparent pixels. Use a flat palette image with 2–32 colors; images with more colors are rejected. PNG limits: 4 MB and 4,194,304 pixels; JSON limit: 64 KB. The palette applies to the selected region and stays on your device.
 - Save/open a complete version 1 JSON preset, including both region styles. Invalid or oversized files are rejected before applying.
@@ -80,7 +82,7 @@ The browser suite exercises real WebGL shaders, exports, control state, mobile l
 
 The renderer works on a single aligned low-resolution grid. The pipeline is: matching RGB/mask → spatial preparation and backward motion → region-weighted downsampling and stability → Oklab palette mapping → cluster cleanup → dithering/textures → independently stabilized contour composition → integer nearest-neighbor enlargement. Shape cleanup precedes patterning so it does not erase intentional dithering. See [outline behavior, comparisons, and research references](docs/OUTLINES.md).
 
-Only one capture/inference job runs at a time. Incoming opportunities are skipped rather than queued, so slow inference does not create an ever-growing delay. The output keeps each mask paired with the actual image used to compute it. Pattern coordinates stay attached to the screen grid; motion-following textures require a later tracking implementation.
+Only one capture/inference job runs at a time. During ordinary playback, incoming opportunities are skipped rather than queued, so slow inference does not create an ever-growing delay. Experimental uploaded-video processing holds each timeline sample until its work finishes, then advances to the next sample. The output keeps each mask paired with the actual image used to compute it. Pattern coordinates stay attached to the screen grid; motion-following textures require a later tracking implementation.
 
 ## Desktop and recognition roadmap
 

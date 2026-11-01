@@ -42,7 +42,9 @@ export class PersonSegmenter implements Segmenter {
       const { image, ...metadata } = frame;
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Person segmentation stopped responding. Retry person separation.')); this.fail(new Error('Segmentation timed out.')); }, 15_000);
       this.pending.set(id, { frame: metadata, resolve, reject, timer });
-      try { this.post({ type: 'segment', id, image, timestamp: frame.timestamp }, [image]); }
+      // Uploaded-media time can advance more slowly than wall time or restart on replay.
+      // MediaPipe's VIDEO clock is independent of the renderer's media timeline.
+      try { this.post({ type: 'segment', id, image, timestamp: performance.now() }, [image]); }
       catch (error) { clearTimeout(timer); this.pending.delete(id); image.close(); reject(error); }
     });
   }

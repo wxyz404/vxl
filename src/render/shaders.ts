@@ -36,6 +36,25 @@ vec3 atmosphere(vec3 color, vec2 p) {
 }
 `;
 
+/** Extra spatial work on uploaded media; preserve region alpha and strong color/depth edges. */
+export const refine = header + `
+uniform float uSimplify[2];
+void main() {
+  vec4 center=texture(uInput,uv);
+  int region=center.a>=0.5?0:1;
+  vec3 sum=vec3(0.0); float weights=0.0;
+  for(int y=-2;y<=2;y++) for(int x=-2;x<=2;x++) {
+    vec2 p=clamp(uv+vec2(x,y)/uSize,vec2(0.0),vec2(1.0));
+    vec4 neighbor=texture(uInput,p);
+    float sameRegion=(neighbor.a>=0.5)==(center.a>=0.5)?1.0:0.0;
+    vec3 difference=neighbor.rgb-center.rgb;
+    float w=exp(-dot(difference,difference)*80.0-float(x*x+y*y)*0.35)*sameRegion;
+    w*=1.0-smoothstep(0.04,0.14,abs(distanceAt(p)-distanceAt(uv))*uDepthMix);
+    sum+=neighbor.rgb*w; weights+=w;
+  }
+  outColor=vec4(mix(center.rgb,sum/max(weights,0.001),0.2+0.4*uSimplify[region]),center.a);
+}`;
+
 export const sample = header + `
 uniform sampler2D uMotion;
 uniform sampler2D uPrevious;

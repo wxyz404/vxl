@@ -19,7 +19,8 @@
     "compare:depth": "node scripts/compare-depth.mjs",
     "compare:palettes": "node scripts/compare-palette-mapping.mjs",
     "compare:faces": "node scripts/compare-faces.mjs",
-    "benchmark:faces": "node scripts/benchmark-faces.mjs"
+    "benchmark:faces": "node scripts/benchmark-faces.mjs",
+    "compare:media": "node scripts/compare-media-processing.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "3.8.1",
